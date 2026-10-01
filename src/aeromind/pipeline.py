@@ -26,6 +26,7 @@ class PipelineConfig:
     critical_hours: float = 20.0  # priority is based on the conservative (p10) RUL
     urgent_hours: float = 60.0
     reemit_windows: int = 20  # re-send an unchanged advisory at most this often
+    flag_gated_healthy: bool = True  # gate open but classifier says healthy -> unclassified advisory
     sensor_health: bool = True  # validate and mask sensor channels before the models see them
 
 
@@ -134,7 +135,11 @@ class EdgePipeline:
 
         fault, conf = b.classifier.predict(trend[: len(x)])
         if fault == HEALTHY:
-            return None
+            if not cfg.flag_gated_healthy:
+                return None
+            # The gate is open (a persistent anomaly) but the signature is not yet one the classifier
+            # knows: report it unclassified rather than stay silent.
+            fault, conf = "unclassified_anomaly", 1.0 - conf
         if conf < cfg.min_confidence:
             fault = "unclassified_anomaly"
         p10, p50, p90 = b.rul.predict(trend if seq is None else seq)

@@ -372,15 +372,36 @@ def build_classifier_graph(clf, trees: str = "onnx-ml", strategy: str = "gemm") 
     n_targets = len(model._predictors[0])
     if n_targets != len(model.classes_) or n_targets < 3:
         raise NotImplementedError("only multiclass (3+ classes) classifiers are supported")
-    inits = []
+    nodes, inits, clf_in, n_in = [], [], "features", N_FEATURES
+    ctx = getattr(clf, "context", None)
+    if ctx is not None:
+        # Context residuals, as ContextResidual.transform: x - [1, load, OAT, alt, load*OAT] @ W, then context.
+        from onnx import numpy_helper
+
+        inits += [numpy_helper.from_array(np.asarray(ctx.idx, dtype=np.int64), "ctx_idx"),
+                  numpy_helper.from_array(np.asarray(ctx.idx[:1], dtype=np.int64), "ctx_load"),
+                  numpy_helper.from_array(np.asarray(ctx.idx[1:2], dtype=np.int64), "ctx_oat"),
+                  _const("ctx_W", ctx.W[1:]), _const("ctx_b", ctx.W[0])]
+        nodes += [
+            helper.make_node("Gather", ["features", "ctx_idx"], ["ctx"], axis=1),
+            helper.make_node("Gather", ["features", "ctx_load"], ["ctx_l"], axis=1),
+            helper.make_node("Gather", ["features", "ctx_oat"], ["ctx_o"], axis=1),
+            helper.make_node("Mul", ["ctx_l", "ctx_o"], ["ctx_lo"]),
+            helper.make_node("Concat", ["ctx", "ctx_lo"], ["ctx_design"], axis=1),
+            helper.make_node("MatMul", ["ctx_design", "ctx_W"], ["ctx_mm"]),
+            helper.make_node("Add", ["ctx_mm", "ctx_b"], ["ctx_pred"]),
+            helper.make_node("Sub", ["features", "ctx_pred"], ["ctx_res"]),
+            helper.make_node("Concat", ["ctx_res", "ctx"], ["clf_in"], axis=1),
+        ]
+        clf_in, n_in = "clf_in", N_FEATURES + len(ctx.idx)
     if trees == "onnx-ml":
         ens, _, base = _hgb_trees(model)
-        nodes = [ens.node("features", "logits", n_targets, base, "fault_trees"),
-                 helper.make_node("Softmax", ["logits"], ["probabilities"], axis=1)]
+        nodes += [ens.node(clf_in, "logits", n_targets, base, "fault_trees"),
+                  helper.make_node("Softmax", ["logits"], ["probabilities"], axis=1)]
     else:
         # Hummingbird returns (label, probabilities); softmax is already in its graph.
-        nodes, inits = _inline(_hb_onnx(_int_labels(model), N_FEATURES, strategy), "hb_clf_",
-                               {"x": "features"}, {"o1": "probabilities"})
+        n2, i2 = _inline(_hb_onnx(_int_labels(model), n_in, strategy), "hb_clf_", {"x": clf_in}, {"o1": "probabilities"})
+        nodes, inits = nodes + n2, inits + i2
     f32 = TensorProto.FLOAT
     return _model(
         nodes,
@@ -625,7 +646,7 @@ def check_parity(bundle: ModelBundle, onnx_bundle: OnnxBundle, X: np.ndarray, T:
     ``T`` holds trend rows, or sequences for an LSTM bundle (see ``train.rul_inputs``).
     """
     s_ref, s_onx = bundle.anomaly.score(X), onnx_bundle.anomaly.score(X)
-    p_ref = bundle.classifier.model.predict_proba(X)
+    p_ref = bundle.classifier.predict_proba(X)
     p_onx = onnx_bundle.classifier.predict_proba(X)
     r_ref, r_onx = bundle.rul.predict_batch(T), onnx_bundle.rul.predict_batch(T)
     return {

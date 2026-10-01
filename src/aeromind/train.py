@@ -9,8 +9,9 @@ import joblib
 import numpy as np
 
 from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RUL_CAP_WINDOWS, TREND_WINDOW
-from .features import N_FEATURES, extract_features, sequence_matrix, trend_matrix
+from .features import FEATURE_NAMES, N_FEATURES, extract_features, sequence_matrix, trend_matrix
 from .models import AnomalyDetector, FaultClassifier, LSTMRULEstimator, RULEstimator
+from .models.classifier import ContextResidual
 from .models.conformal import ConformalRUL
 from .simulator import simulate_run
 
@@ -47,6 +48,8 @@ class TrainConfig:
     seed: int = 0
     rul_model: str = "hgb"  # "hgb" (quantile gradient boosting on trend features) or "lstm"
     seq_len: int = 30  # LSTM input length in windows
+    context_residuals: bool = True  # classifier sees deviations from the healthy value at the current load/OAT/altitude
+    classifier_min_degradation: float = 0.3  # faulted windows below this degradation are not used as labels
     conformal: bool = False  # hold out 20% of faulted runs to conformally calibrate the RUL interval
     phases: bool = False  # simulate flight phases (taxi ... cruise ... taxi) with ambient/altitude context
 
@@ -101,10 +104,11 @@ def train(cfg: TrainConfig | None = None, runs: list[RunData] | None = None) -> 
         Xc.append(trends[id(r)][:, :N_FEATURES])
         yc += [HEALTHY] * len(r.X)
     for r in faulted:
-        m = r.degradation >= 0.3
+        m = r.degradation >= cfg.classifier_min_degradation
         Xc.append(trends[id(r)][m, :N_FEATURES])
         yc += [r.mode] * int(m.sum())
-    classifier = FaultClassifier(seed=cfg.seed).fit(np.vstack(Xc), np.asarray(yc))
+    context = ContextResidual(FEATURE_NAMES).fit(np.vstack([r.X for r in healthy])) if cfg.context_residuals else None
+    classifier = FaultClassifier(seed=cfg.seed, context=context).fit(np.vstack(Xc), np.asarray(yc))
 
     # 4. RUL: faulted windows the deployed gate could plausibly reach (elevated anomaly score).
     Xr = np.vstack([trends[id(r)] for r in faulted])
