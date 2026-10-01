@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import pytest
 
-from aeromind.features import SequenceTracker, sequence_matrix
+from aeromind.features import N_FEATURES, SequenceTracker, sequence_matrix
 
 
 def test_sequence_tracker_matches_offline_matrix_and_pads_left():
@@ -81,7 +81,7 @@ def test_lstm_onnx_export_matches_torch(lstm_bundle, tmp_path):
     from aeromind.train import collect_run, rul_inputs
 
     man = export_onnx(lstm_bundle, tmp_path)
-    assert man["rul_input"] == {"name": "sequence", "kind": "sequence", "shape": [30, 20]}
+    assert man["rul_input"] == {"name": "sequence", "kind": "sequence", "shape": [30, N_FEATURES + 1]}
     rul_graph = onnx.load(tmp_path / "rul.onnx")
     assert "LSTM" in operators(rul_graph) and set(operators(rul_graph)) <= TENSORRT_OPERATORS
     r = collect_run("overheating", 200, 8_400_000)

@@ -7,7 +7,7 @@ pytest.importorskip("onnxruntime")
 
 from aeromind.config import FAULT_MODES, HEALTHY
 from aeromind.dashboard import Scenario, build_dashboard
-from aeromind.features import trend_matrix
+from aeromind.features import FEATURE_NAMES, trend_matrix
 from aeromind.onnx_export import OnnxBundle, check_parity, export_onnx
 from aeromind.pipeline import EdgePipeline
 from aeromind.simulator import simulate_run
@@ -30,7 +30,7 @@ def test_manifest_lists_files_and_classes(bundle, onnx_dir):
     m = json.loads((onnx_dir / "manifest.json").read_text())
     assert set(m["files"]) == {"anomaly", "classifier", "rul"}
     assert m["classes"] == [str(c) for c in bundle.classifier.model.classes_]
-    assert len(m["feature_names"]) == 19
+    assert m["feature_names"] == FEATURE_NAMES
 
 
 def test_onnx_matches_sklearn(bundle, onnx_dir):

@@ -29,6 +29,10 @@ class SensorWindow:
     temperature: np.ndarray  # (N_SLOW,)
     pressure: np.ndarray  # (N_SLOW,)
     oil_debris: np.ndarray  # (N_SLOW,)
+    # Operating context from the air-data / flight-management systems.
+    phase: str = "steady"
+    ambient_c: float = 15.0  # outside air temperature
+    altitude_ft: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -74,8 +78,28 @@ def _bearing_impulses(rng: np.random.Generator, f_shaft: float) -> np.ndarray:
     return np.convolve(impulses, _KERNEL)[:N_HIGH]
 
 
+# Flight profile: (phase, windows per flight, mean load, altitude ft). A window is a 1 s snapshot.
+FLIGHT_PROFILE = (
+    ("taxi_out", 2, 0.47, 0.0),
+    ("takeoff", 1, 0.98, 0.0),
+    ("climb", 2, 0.90, 15_000.0),
+    ("cruise", 6, 0.72, 36_000.0),
+    ("descent", 2, 0.50, 12_000.0),
+    ("taxi_in", 1, 0.47, 0.0),
+)
+PHASES = tuple(p[0] for p in FLIGHT_PROFILE)
+_PHASE = {p[0]: p for p in FLIGHT_PROFILE}
+
+
+def phase_context(phase: str, ground_temp_c: float) -> tuple[float, float, float]:
+    """(mean load, altitude ft, outside air temperature °C) for a flight phase (ISA lapse 1.98 °C/1000 ft)."""
+    _, _, load, alt = _PHASE[phase]
+    return load, alt, ground_temp_c - 1.98 * alt / 1000.0
+
+
 def _make_window(
-    rng: np.random.Generator, t: int, load: float, d: float, mode: str, tail: TailProfile
+    rng: np.random.Generator, t: int, load: float, d: float, mode: str, tail: TailProfile,
+    ambient_c: float = 15.0, altitude_ft: float = 0.0, flight_phase: str = "steady",
 ) -> SensorWindow:
     f_shaft = 25.0 + 10.0 * load
     phase = rng.uniform(0, 2 * np.pi)
@@ -94,8 +118,9 @@ def _make_window(
     harm3 = harm5 = 0.0
     v_mean, v_ripple = 115.0, 0.3
     # Slow channels.
-    temp = 60.0 + 25.0 * load + tail.temp_offset
-    press = 40.0 + 10.0 * load + tail.pressure_offset
+    # Outside air cools the casing/oil; altitude lowers the reference pressure slightly.
+    temp = 60.0 + 25.0 * load + tail.temp_offset + 0.35 * (ambient_c - 15.0)
+    press = 40.0 + 10.0 * load + tail.pressure_offset - 0.06 * altitude_ft / 1000.0
     press_noise = 0.4
     oil = 2.0 + 0.5 * load + tail.oil_offset
 
@@ -146,7 +171,19 @@ def _make_window(
         temperature=temp + 0.5 * rng.standard_normal(N_SLOW),
         pressure=press + press_noise * rng.standard_normal(N_SLOW),
         oil_debris=np.abs(oil + 0.4 * rng.standard_normal(N_SLOW)),
+        phase=flight_phase,
+        ambient_c=float(ambient_c),
+        altitude_ft=float(altitude_ft),
     )
+
+
+def _flight_phases(rng: np.random.Generator) -> Iterator[tuple[str, float]]:
+    """Endless sequence of (phase, ground temperature) following FLIGHT_PROFILE, one flight at a time."""
+    while True:
+        ground = float(rng.uniform(5.0, 42.0))  # varies by station and season
+        for phase, n, _, _ in FLIGHT_PROFILE:
+            for _ in range(n):
+                yield phase, ground
 
 
 def simulate_run(
@@ -154,21 +191,79 @@ def simulate_run(
     life: int,
     seed: int,
     tail: TailProfile | None = None,
+    phases: bool = False,
 ) -> Iterator[tuple[SensorWindow, Truth]]:
     """Yield ``life`` consecutive windows. For a fault mode the component fails at ``life``;
-    for ``healthy`` it never degrades (``life`` is just the run length)."""
+    for ``healthy`` it never degrades (``life`` is just the run length).
+
+    ``phases=True`` follows a flight profile (taxi, take-off, climb, cruise, descent, taxi) with
+    phase-dependent load, altitude and outside air temperature; otherwise load varies smoothly
+    at constant ambient conditions (the original simulator).
+    """
     if mode != HEALTHY and mode not in FAULT_MODES:
         raise ValueError(f"unknown mode {mode!r}")
     rng = np.random.default_rng(seed)
     tail = tail if tail is not None else TailProfile.random(rng)
     load_phase = rng.uniform(0, 2 * np.pi)
+    flights = _flight_phases(np.random.default_rng(seed + 17)) if phases else None
     ar = 0.0
     for t in range(life):
         ar = 0.9 * ar + 0.03 * rng.standard_normal()
-        load = float(np.clip(0.75 + 0.15 * np.sin(2 * np.pi * t / 60 + load_phase) + ar, 0.45, 1.0))
+        ctx = {}
+        if flights is not None:
+            phase, ground = next(flights)
+            base, alt, oat = phase_context(phase, ground)
+            load = float(np.clip(base + ar, 0.45, 1.0))
+            ctx = {"flight_phase": phase, "ambient_c": oat, "altitude_ft": alt}
+        else:
+            load = float(np.clip(0.75 + 0.15 * np.sin(2 * np.pi * t / 60 + load_phase) + ar, 0.45, 1.0))
         if mode == HEALTHY:
             d, rul = 0.0, None
         else:
             d, rul = (t / life) ** 2, life - t
         truth = Truth(mode=mode, degradation=d, rul_windows=rul, life=None if mode == HEALTHY else life)
-        yield _make_window(rng, t, load, d, mode, tail), truth
+        yield _make_window(rng, t, load, d, mode, tail, **ctx), truth
+
+
+class LiveAircraft:
+    """Stateful simulator for the live demo: one window per ``step()``, faults injected at any time.
+
+    A component fault injected at window ``t0`` with life ``L`` degrades as ``((t - t0) / L) ** 2``
+    and fails at ``t0 + L``, exactly like ``simulate_run``.
+    """
+
+    def __init__(self, seed: int, tail: TailProfile | None = None):
+        self.rng = np.random.default_rng(seed)
+        self.tail = tail if tail is not None else TailProfile.random(self.rng)
+        self._flights = _flight_phases(np.random.default_rng(seed + 17))
+        self.t, self.ar = 0, 0.0
+        self.mode, self.fault_start, self.fault_life = HEALTHY, 0, None
+        self.phase_override: str | None = None
+        self._ground = 25.0
+
+    def inject(self, mode: str, life: int = 240) -> None:
+        if mode != HEALTHY and mode not in FAULT_MODES:
+            raise ValueError(f"unknown mode {mode!r}")
+        self.mode, self.fault_start, self.fault_life = mode, self.t, (None if mode == HEALTHY else life)
+
+    def degradation(self) -> float:
+        if self.fault_life is None:
+            return 0.0
+        return min(1.0, ((self.t - self.fault_start) / self.fault_life) ** 2)
+
+    def rul_windows(self) -> int | None:
+        return None if self.fault_life is None else max(0, self.fault_start + self.fault_life - self.t)
+
+    def step(self) -> tuple[SensorWindow, Truth]:
+        phase, self._ground = next(self._flights)
+        if self.phase_override:
+            phase = self.phase_override
+        base, alt, oat = phase_context(phase, self._ground)
+        self.ar = 0.9 * self.ar + 0.03 * self.rng.standard_normal()
+        load = float(np.clip(base + self.ar, 0.45, 1.0))
+        d, rul = self.degradation(), self.rul_windows()
+        mode = self.mode if self.fault_life is not None else HEALTHY
+        truth = Truth(mode=mode, degradation=d, rul_windows=rul, life=self.fault_life)
+        w = _make_window(self.rng, self.t, load, d, mode, self.tail, ambient_c=oat, altitude_ft=alt, flight_phase=phase)
+        self.t += 1
+        return w, truth

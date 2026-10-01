@@ -46,6 +46,7 @@ class TrainConfig:
     seed: int = 0
     rul_model: str = "hgb"  # "hgb" (quantile gradient boosting on trend features) or "lstm"
     seq_len: int = 30  # LSTM input length in windows
+    phases: bool = False  # simulate flight phases (taxi ... cruise ... taxi) with ambient/altitude context
 
 
 def rul_inputs(rul, X: np.ndarray, scores: np.ndarray) -> np.ndarray:
@@ -55,9 +56,9 @@ def rul_inputs(rul, X: np.ndarray, scores: np.ndarray) -> np.ndarray:
     return trend_matrix(X, scores, TREND_WINDOW)
 
 
-def collect_run(mode: str, life: int, seed: int) -> RunData:
+def collect_run(mode: str, life: int, seed: int, phases: bool = False) -> RunData:
     X, d, rul = [], [], []
-    for w, truth in simulate_run(mode, life, seed):
+    for w, truth in simulate_run(mode, life, seed, phases=phases):
         X.append(extract_features(w))
         d.append(truth.degradation)
         rul.append(np.nan if truth.rul_windows is None else truth.rul_windows)
@@ -68,11 +69,11 @@ def collect_dataset(cfg: TrainConfig) -> list[RunData]:
     rng = np.random.default_rng(cfg.seed)
     runs = []
     for i in range(cfg.healthy_runs):
-        runs.append(collect_run(HEALTHY, cfg.healthy_len, cfg.seed * 100_003 + i))
+        runs.append(collect_run(HEALTHY, cfg.healthy_len, cfg.seed * 100_003 + i, cfg.phases))
     for m, mode in enumerate(FAULT_MODES):
         for i in range(cfg.runs_per_mode):
             life = int(rng.integers(*cfg.life_range))
-            runs.append(collect_run(mode, life, cfg.seed * 100_003 + 1000 * (m + 1) + i))
+            runs.append(collect_run(mode, life, cfg.seed * 100_003 + 1000 * (m + 1) + i, cfg.phases))
     return runs
 
 

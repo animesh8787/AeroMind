@@ -25,6 +25,7 @@ FEATURE_NAMES = [
     "temp_mean",
     "press_mean", "press_std",
     "oil_mean", "oil_max",
+    "ambient_c", "altitude_kft",  # operating context (air data)
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
@@ -59,6 +60,7 @@ def extract_features(w: SensorWindow) -> np.ndarray:
         w.temperature.mean(),
         w.pressure.mean(), w.pressure.std(),
         w.oil_debris.mean(), w.oil_debris.max(),
+        w.ambient_c, w.altitude_ft / 1000.0,
     ]
     return np.asarray(feats, dtype=np.float64)
 

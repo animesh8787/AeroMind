@@ -2,10 +2,10 @@
 
 Three self-contained float32 graphs, written directly with ``onnx.helper`` (no skl2onnx):
 
-  anomaly.onnx     features (N,19)        -> score (N,), z (N,19)
+  anomaly.onnx     features (N,F)         -> score (N,), z (N,F)   F = len(FEATURE_NAMES)
                    scaler, Isolation Forest, autoencoder and the healthy calibration, all in-graph
-  classifier.onnx  features (N,19)        -> probabilities (N,C)   classes listed in manifest.json
-  rul.onnx         trend features (N,22)  -> rul_hours (N,3)       sorted p10 <= p50 <= p90, >= 0
+  classifier.onnx  features (N,F)         -> probabilities (N,C)   classes listed in manifest.json
+  rul.onnx         trend features (N,F+3) -> rul_hours (N,3)       sorted p10 <= p50 <= p90, >= 0
 
 Feature extraction, trend tracking, the persistence gate and advisory formatting stay in
 host code (``pipeline.py``); only the learned models are exported.

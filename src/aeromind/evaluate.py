@@ -12,17 +12,18 @@ from .train import ModelBundle
 EVAL_SEED_BASE = 9_000_000
 
 
-def _run(bundle: ModelBundle, mode: str, life: int, seed: int):
+def _run(bundle: ModelBundle, mode: str, life: int, seed: int, phases: bool = False):
     pipe = EdgePipeline(bundle)
     adv = []
-    for w, truth in simulate_run(mode, life, seed):
+    for w, truth in simulate_run(mode, life, seed, phases=phases):
         a = pipe.process(w)
         if a is not None:
             adv.append((a, truth))
     return pipe, adv
 
 
-def evaluate(bundle: ModelBundle, runs_per_mode: int = 6, healthy_runs: int = 6, seed: int = 0) -> dict:
+def evaluate(bundle: ModelBundle, runs_per_mode: int = 6, healthy_runs: int = 6, seed: int = 0,
+             phases: bool = False) -> dict:
     rng = np.random.default_rng(EVAL_SEED_BASE + seed)
     results: dict = {"per_mode": {}}
     windows_total = advisory_bytes = lat_total = 0.0
@@ -31,7 +32,7 @@ def evaluate(bundle: ModelBundle, runs_per_mode: int = 6, healthy_runs: int = 6,
     # False alarms on healthy runs.
     fa, h_windows = 0, 0
     for i in range(healthy_runs):
-        pipe, adv = _run(bundle, HEALTHY, 300, EVAL_SEED_BASE + seed * 1000 + i)
+        pipe, adv = _run(bundle, HEALTHY, 300, EVAL_SEED_BASE + seed * 1000 + i, phases)
         fa += len(adv)
         h_windows += pipe.stats.windows
         windows_total += pipe.stats.windows
@@ -45,7 +46,7 @@ def evaluate(bundle: ModelBundle, runs_per_mode: int = 6, healthy_runs: int = 6,
         leads, cls_leads, abs_err, covered, n_rul = [], [], [], 0, 0
         for i in range(runs_per_mode):
             life = int(rng.integers(250, 450))
-            pipe, adv = _run(bundle, mode, life, EVAL_SEED_BASE + seed * 1000 + 100 * (m + 1) + i)
+            pipe, adv = _run(bundle, mode, life, EVAL_SEED_BASE + seed * 1000 + 100 * (m + 1) + i, phases)
             windows_total += pipe.stats.windows
             advisory_bytes += pipe.stats.advisory_bytes
             lat_total += pipe.stats.latency_ms_total

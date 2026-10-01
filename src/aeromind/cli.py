@@ -37,7 +37,8 @@ def _add_backend_args(p) -> None:
 
 def _cmd_train(a) -> None:
     t0 = time.time()
-    bundle = train(TrainConfig(runs_per_mode=a.runs_per_mode, healthy_runs=a.healthy_runs, seed=a.seed, rul_model=a.rul))
+    bundle = train(TrainConfig(runs_per_mode=a.runs_per_mode, healthy_runs=a.healthy_runs, seed=a.seed, rul_model=a.rul,
+                                phases=a.phases))
     bundle.save(a.model)
     print(f"trained in {time.time() - t0:.0f}s -> {a.model}")
 
@@ -85,7 +86,7 @@ def _cmd_demo(a) -> None:
 
 
 def _cmd_evaluate(a) -> None:
-    print(json.dumps(evaluate(_load_backend(a), a.runs_per_mode, a.healthy_runs, a.seed), indent=2))
+    print(json.dumps(evaluate(_load_backend(a), a.runs_per_mode, a.healthy_runs, a.seed, a.phases), indent=2))
 
 
 def _cmd_dashboard(a) -> None:
@@ -131,6 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--rul", choices=("hgb", "lstm"), default="hgb",
                    help="RUL model: gradient-boosted quantile trees, or a PyTorch LSTM over the last 30 windows")
+    t.add_argument("--phases", action="store_true", help="train on flight-phase simulation (taxi, climb, cruise ...)")
     t.set_defaults(fn=_cmd_train)
 
     x = sub.add_parser("export-onnx", help="export the trained bundle to ONNX and check parity")
@@ -154,6 +156,7 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--runs-per-mode", type=int, default=6)
     e.add_argument("--healthy-runs", type=int, default=6)
     e.add_argument("--seed", type=int, default=0)
+    e.add_argument("--phases", action="store_true", help="evaluate on flight-phase simulation")
     e.set_defaults(fn=_cmd_evaluate)
 
     h = sub.add_parser("dashboard", help="write a self-contained HTML replay of simulated runs")
