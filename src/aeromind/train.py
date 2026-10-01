@@ -11,6 +11,7 @@ import numpy as np
 from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RUL_CAP_WINDOWS, TREND_WINDOW
 from .features import N_FEATURES, extract_features, sequence_matrix, trend_matrix
 from .models import AnomalyDetector, FaultClassifier, LSTMRULEstimator, RULEstimator
+from .models.conformal import ConformalRUL
 from .simulator import simulate_run
 
 
@@ -46,6 +47,7 @@ class TrainConfig:
     seed: int = 0
     rul_model: str = "hgb"  # "hgb" (quantile gradient boosting on trend features) or "lstm"
     seq_len: int = 30  # LSTM input length in windows
+    conformal: bool = False  # hold out 20% of faulted runs to conformally calibrate the RUL interval
     phases: bool = False  # simulate flight phases (taxi ... cruise ... taxi) with ambient/altitude context
 
 
@@ -110,13 +112,22 @@ def train(cfg: TrainConfig | None = None, runs: list[RunData] | None = None) -> 
     gated = Xr[:, N_FEATURES] >= 0.8  # mean anomaly score over the trend window
     if gated.sum() < 200:
         gated[:] = True
+    groups_all = np.concatenate([np.full(len(r.X), k) for k, r in enumerate(faulted)])
+    cal = np.zeros(len(gated), dtype=bool)
+    if cfg.conformal:  # whole runs held out, so calibration windows never share a run with training
+        held = np.random.default_rng(cfg.seed + 1).choice(len(faulted), max(2, len(faulted) // 5), replace=False)
+        cal = np.isin(groups_all, held)
+    fit_mask, cal_mask = gated & ~cal, gated & cal
     if cfg.rul_model == "lstm":
-        S = np.vstack([sequence_matrix(r.X, scores[id(r)], cfg.seq_len) for r in faulted])
-        groups = np.concatenate([np.full(len(r.X), k) for k, r in enumerate(faulted)])
-        rul = LSTMRULEstimator(seq_len=cfg.seq_len, seed=cfg.seed).fit(S[gated], yr[gated], groups[gated])
+        Xin = np.vstack([sequence_matrix(r.X, scores[id(r)], cfg.seq_len) for r in faulted])
+        rul = LSTMRULEstimator(seq_len=cfg.seq_len, seed=cfg.seed).fit(Xin[fit_mask], yr[fit_mask],
+                                                                        groups_all[fit_mask])
     elif cfg.rul_model == "hgb":
-        rul = RULEstimator(seed=cfg.seed).fit(Xr[gated], yr[gated])
+        Xin = Xr
+        rul = RULEstimator(seed=cfg.seed).fit(Xin[fit_mask], yr[fit_mask])
     else:
         raise ValueError(f"unknown rul_model {cfg.rul_model!r}")
+    if cfg.conformal:
+        rul = ConformalRUL(rul).calibrate(Xin[cal_mask], yr[cal_mask])
 
     return ModelBundle(anomaly, classifier, rul)

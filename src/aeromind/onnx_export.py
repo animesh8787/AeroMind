@@ -402,6 +402,24 @@ def build_lstm_rul_graph(rul) -> "object":
     return m
 
 
+def _conformal_graph(m, q: float):
+    """Append the CQR adjustment: [p10 - q, p50, p90 + q], re-sorted and clipped at 0."""
+    from onnx import TensorProto, checker, helper
+
+    g = m.graph
+    for n in g.node:
+        n.output[:] = ["rul_base" if o == "rul_hours" else o for o in n.output]
+    g.initializer.append(_const("cqr_offset", [[-q, 0.0, q]]))
+    g.node.extend([
+        helper.make_node("Add", ["rul_base", "cqr_offset"], ["rul_cqr"]),
+        helper.make_node("Constant", [], ["cqr_k"], value=helper.make_tensor("cqr_kv", TensorProto.INT64, [1], [3])),
+        helper.make_node("TopK", ["rul_cqr", "cqr_k"], ["rul_cqr_sorted", "rul_cqr_idx"], axis=1, largest=0, sorted=1),
+        helper.make_node("Relu", ["rul_cqr_sorted"], ["rul_hours"]),
+    ])
+    checker.check_model(m, full_check=True)
+    return m
+
+
 def rul_input_spec(rul) -> dict:
     """Name and per-row shape of the RUL graph's input."""
     if getattr(rul, "input_kind", "trend") == "sequence":
@@ -411,6 +429,11 @@ def rul_input_spec(rul) -> dict:
 
 def build_rul_graph(rul, trees: str = "onnx-ml", strategy: str = "gemm") -> "object":
     from onnx import TensorProto, helper
+
+    from .models.conformal import ConformalRUL
+
+    if isinstance(rul, ConformalRUL):
+        return _conformal_graph(build_rul_graph(rul.base, trees, strategy), rul.q)
 
     if getattr(rul, "input_kind", "trend") == "sequence":
         return build_lstm_rul_graph(rul)  # no trees: identical for both tree backends

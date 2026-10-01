@@ -112,10 +112,12 @@ class RegimeNormaliser:
 class CmapssRUL:
     """AeroMind pipeline for run-to-failure RUL on C-MAPSS."""
 
-    def __init__(self, subset: str, seed: int = 0, rul: str = "hgb", lstm_hidden: int = LSTM_HIDDEN):
+    def __init__(self, subset: str, seed: int = 0, rul: str = "hgb", lstm_hidden: int = LSTM_HIDDEN,
+                 conformal: bool = False):
         if rul not in ("hgb", "lstm"):
             raise ValueError(f"unknown rul model {rul!r}")
         self.subset, self.seed, self.rul_kind, self.lstm_hidden = subset, seed, rul, lstm_hidden
+        self.conformal = conformal
 
     def _normalise(self, eng: Engines) -> list[np.ndarray]:
         return [self.norm.transform(s, x) for s, x in zip(eng.settings, eng.sensors)]
@@ -129,6 +131,15 @@ class CmapssRUL:
         return LSTMRULEstimator(seq_len=TREND_K, hidden=self.lstm_hidden, seed=self.seed)
 
     def fit(self, train: Engines) -> "CmapssRUL":
+        cal = None
+        if self.conformal:
+            # Hold out 20% of engines; calibrate at 10 random truncation points per engine, which
+            # matches how the official test split cuts trajectories (all-cycle calibration does not).
+            rng = np.random.default_rng(self.seed + 7)
+            idx = rng.permutation(len(train.sensors))
+            k = max(2, len(idx) // 5)
+            pick = lambda ids: Engines([train.settings[i] for i in ids], [train.sensors[i] for i in ids])  # noqa: E731
+            cal, train = pick(idx[:k]), pick(idx[k:])
         self.norm = RegimeNormaliser(N_REGIMES[self.subset], self.seed).fit(train)
         Xs = self._normalise(train)
         rng = np.random.default_rng(self.seed)
@@ -151,6 +162,17 @@ class CmapssRUL:
             self.rul = RULEstimator(seed=self.seed).fit(T, y)
             self.rul_no_anomaly = RULEstimator(seed=self.seed).fit(T[:, : self.n_sensor_feats], y)
         self.train_median = float(np.median(y))
+        if cal is not None:
+            from .models.conformal import ConformalRUL
+
+            rng = np.random.default_rng(self.seed + 8)
+            Tc, yc = [], []
+            for T, x in zip(self._inputs(self._normalise(cal)), cal.sensors):
+                n = len(x)
+                for cut in rng.integers(max(TREND_K + 1, n // 4), n, 10):
+                    Tc.append(T[cut - 1])
+                    yc.append(min(n - cut + 1, RUL_CAP))
+            self.rul = ConformalRUL(self.rul).calibrate(np.array(Tc), np.array(yc, dtype=float))
         return self
 
     def predict_last(self, test: Engines) -> dict[str, np.ndarray]:
@@ -173,9 +195,9 @@ def _metrics(pred: np.ndarray, true_capped: np.ndarray, true_raw: np.ndarray) ->
     }
 
 
-def run_subset(data_dir: str | Path, subset: str, seed: int = 0, rul: str = "hgb") -> dict:
+def run_subset(data_dir: str | Path, subset: str, seed: int = 0, rul: str = "hgb", conformal: bool = False) -> dict:
     train, test, rul_true = load_subset(data_dir, subset)
-    model = CmapssRUL(subset, seed, rul).fit(train)
+    model = CmapssRUL(subset, seed, rul, conformal=conformal).fit(train)
     preds = model.predict_last(test)
     capped = np.minimum(rul_true, RUL_CAP)
     q = preds["aeromind"]

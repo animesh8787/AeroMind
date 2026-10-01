@@ -38,7 +38,7 @@ def _add_backend_args(p) -> None:
 def _cmd_train(a) -> None:
     t0 = time.time()
     bundle = train(TrainConfig(runs_per_mode=a.runs_per_mode, healthy_runs=a.healthy_runs, seed=a.seed, rul_model=a.rul,
-                                phases=a.phases))
+                                phases=a.phases, conformal=a.conformal))
     bundle.save(a.model)
     print(f"trained in {time.time() - t0:.0f}s -> {a.model}")
 
@@ -138,7 +138,7 @@ def _cmd_cmapss(a) -> None:
     cmapss.download(a.data_dir)
     out = {}
     for sub in a.subsets:
-        runs = [cmapss.run_subset(a.data_dir, sub, seed=s, rul=a.rul) for s in range(a.seeds)]
+        runs = [cmapss.run_subset(a.data_dir, sub, seed=s, rul=a.rul, conformal=a.conformal) for s in range(a.seeds)]
         agg = {}
         for key in ("aeromind", "no_anomaly_features", "constant_baseline"):
             agg[key] = {
@@ -164,6 +164,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--rul", choices=("hgb", "lstm"), default="hgb",
                    help="RUL model: gradient-boosted quantile trees, or a PyTorch LSTM over the last 30 windows")
     t.add_argument("--phases", action="store_true", help="train on flight-phase simulation (taxi, climb, cruise ...)")
+    t.add_argument("--conformal", action="store_true", help="conformally calibrate the RUL interval on held-out runs")
     t.set_defaults(fn=_cmd_train)
 
     x = sub.add_parser("export-onnx", help="export the trained bundle to ONNX and check parity")
@@ -227,6 +228,7 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--subsets", nargs="+", default=["FD001", "FD002", "FD003", "FD004"])
     c.add_argument("--seeds", type=int, default=3)
     c.add_argument("--rul", choices=("hgb", "lstm"), default="hgb")
+    c.add_argument("--conformal", action="store_true", help="conformally calibrate the RUL interval")
     c.set_defaults(fn=_cmd_cmapss)
 
     a = p.parse_args(argv)
