@@ -19,7 +19,7 @@ from ..config import FAULT_MODES
 from ..signing import ModelSlots, PackageRejected, generate_keypair, sign_package
 from .fleet import SENSOR_PRESETS, Fleet
 
-DEFAULT_MODEL_DIR = "artifacts/onnx-phases"
+DEFAULT_MODEL_DIR = "artifacts/onnx-fleet"
 
 
 def ensure_model(model_dir: str | Path) -> Path:
@@ -29,8 +29,8 @@ def ensure_model(model_dir: str | Path) -> Path:
         from ..onnx_export import export_onnx
         from ..train import TrainConfig, train
 
-        print(f"No model at {d}: training a flight-phase model (about 20 s)...", flush=True)
-        export_onnx(train(TrainConfig(phases=True)), d)
+        print(f"No model at {d}: training a flight-phase model with conformal RUL (about 20 s)...", flush=True)
+        export_onnx(train(TrainConfig(phases=True, conformal=True)), d)
     return d
 
 

@@ -128,6 +128,18 @@ def _cmd_ims(a) -> None:
     print(json.dumps(ims.run(hours, X), indent=2))
 
 
+def _cmd_bench(a) -> None:
+    from .bench import benchmark
+
+    print(json.dumps(benchmark(a.onnx_dir, a.n, phases=True, int8_dir=a.int8_dir), indent=2))
+
+
+def _cmd_report(a) -> None:
+    from .report import generate
+
+    generate(a.out, a.cmapss_dir, a.ims_dir, a.cmapss_seeds, log=lambda m: print(m, flush=True))
+
+
 def _cmd_federated(a) -> None:
     print(json.dumps(federated_demo(a.clients, a.seed), indent=2))
 
@@ -197,7 +209,7 @@ def main(argv: list[str] | None = None) -> None:
     h.set_defaults(fn=_cmd_dashboard, backend="onnx")
 
     v = sub.add_parser("serve", help="live ground station: simulated fleet, fault injection, OTA (needs .[app])")
-    v.add_argument("--onnx-dir", default="artifacts/onnx-phases", help="phase-aware ONNX model (trained if missing)")
+    v.add_argument("--onnx-dir", default="artifacts/onnx-fleet", help="phase-aware ONNX model (trained if missing)")
     v.add_argument("--workdir", default="artifacts/ground", help="keys, signed packages and installed models")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8000)
@@ -217,6 +229,19 @@ def main(argv: list[str] | None = None) -> None:
     m = sub.add_parser("ims", help="NASA IMS real bearing run-to-failure (downloads ~1.1 GB on first use)")
     m.add_argument("--data-dir", default="data/ims")
     m.set_defaults(fn=_cmd_ims)
+
+    k = sub.add_parser("bench", help="edge benchmark of an ONNX bundle: size, latency, memory, INT8 vs FP32")
+    k.add_argument("--onnx-dir", default="artifacts/onnx-fleet")
+    k.add_argument("--int8-dir", default="artifacts/onnx-fleet-int8")
+    k.add_argument("-n", type=int, default=1000)
+    k.set_defaults(fn=_cmd_bench)
+
+    q = sub.add_parser("report", help="regenerate every metric into artifacts/report (results.json, report.md)")
+    q.add_argument("--out", default="artifacts/report")
+    q.add_argument("--cmapss-dir", default="data/cmapss")
+    q.add_argument("--ims-dir", default="data/ims")
+    q.add_argument("--cmapss-seeds", type=int, default=3)
+    q.set_defaults(fn=_cmd_report)
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)
