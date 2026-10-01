@@ -80,6 +80,30 @@ def trend_matrix(X: np.ndarray, scores: np.ndarray, k: int = TREND_WINDOW) -> np
     )
 
 
+def sequence_matrix(X: np.ndarray, scores: np.ndarray, length: int) -> np.ndarray:
+    """(T, length, F+1) windows of [features, anomaly score] ending at each step.
+
+    Steps before the start of the run are filled with the first window (left padding), so
+    early windows still give a full-length sequence. Offline twin of ``SequenceTracker``.
+    """
+    Z = np.column_stack([X, scores])
+    idx = np.arange(len(Z))[:, None] + np.arange(-length + 1, 1)[None, :]
+    return Z[np.maximum(idx, 0)]
+
+
+class SequenceTracker:
+    """Streaming version of ``sequence_matrix``: identical output for identical history."""
+
+    def __init__(self, length: int):
+        self._z: deque[np.ndarray] = deque(maxlen=length)
+        self.length = length
+
+    def update(self, x: np.ndarray, score: float) -> np.ndarray:
+        self._z.append(np.append(x, score))
+        pad = [self._z[0]] * (self.length - len(self._z))
+        return np.stack(pad + list(self._z))
+
+
 class TrendTracker:
     """Streaming version of ``trend_matrix``: identical output for identical history."""
 

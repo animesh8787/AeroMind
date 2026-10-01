@@ -37,15 +37,14 @@ def _add_backend_args(p) -> None:
 
 def _cmd_train(a) -> None:
     t0 = time.time()
-    bundle = train(TrainConfig(runs_per_mode=a.runs_per_mode, healthy_runs=a.healthy_runs, seed=a.seed))
+    bundle = train(TrainConfig(runs_per_mode=a.runs_per_mode, healthy_runs=a.healthy_runs, seed=a.seed, rul_model=a.rul))
     bundle.save(a.model)
     print(f"trained in {time.time() - t0:.0f}s -> {a.model}")
 
 
 def _cmd_export_onnx(a) -> None:
-    from .features import trend_matrix
     from .onnx_export import OnnxBundle, check_parity, export_onnx
-    from .train import collect_run
+    from .train import collect_run, rul_inputs
 
     bundle = ModelBundle.load(a.model)
     a.out = a.out or (DEFAULT_ONNX if a.trees == "onnx-ml" else f"{DEFAULT_ONNX}-trt")
@@ -56,7 +55,7 @@ def _cmd_export_onnx(a) -> None:
     # Parity on fresh simulated windows from every mode (seeds disjoint from training and evaluation).
     runs = [collect_run(m, 300, 8_000_000 + i) for i, m in enumerate((HEALTHY, *FAULT_MODES))]
     X = np.vstack([r.X for r in runs])
-    T = np.vstack([trend_matrix(r.X, bundle.anomaly.score(r.X)) for r in runs])
+    T = np.concatenate([rul_inputs(bundle.rul, r.X, bundle.anomaly.score(r.X)) for r in runs])
     print(json.dumps(check_parity(bundle, OnnxBundle(a.out), X, T), indent=2))
     print(f"-> {a.out}")
 
@@ -107,7 +106,7 @@ def _cmd_cmapss(a) -> None:
     cmapss.download(a.data_dir)
     out = {}
     for sub in a.subsets:
-        runs = [cmapss.run_subset(a.data_dir, sub, seed=s) for s in range(a.seeds)]
+        runs = [cmapss.run_subset(a.data_dir, sub, seed=s, rul=a.rul) for s in range(a.seeds)]
         agg = {}
         for key in ("aeromind", "no_anomaly_features", "constant_baseline"):
             agg[key] = {
@@ -130,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--runs-per-mode", type=int, default=12)
     t.add_argument("--healthy-runs", type=int, default=20)
     t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--rul", choices=("hgb", "lstm"), default="hgb",
+                   help="RUL model: gradient-boosted quantile trees, or a PyTorch LSTM over the last 30 windows")
     t.set_defaults(fn=_cmd_train)
 
     x = sub.add_parser("export-onnx", help="export the trained bundle to ONNX and check parity")
@@ -169,6 +170,7 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--data-dir", default="data/cmapss")
     c.add_argument("--subsets", nargs="+", default=["FD001", "FD002", "FD003", "FD004"])
     c.add_argument("--seeds", type=int, default=3)
+    c.add_argument("--rul", choices=("hgb", "lstm"), default="hgb")
     c.set_defaults(fn=_cmd_cmapss)
 
     a = p.parse_args(argv)

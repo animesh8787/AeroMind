@@ -44,14 +44,15 @@ FILES = {"anomaly": "anomaly.onnx", "classifier": "classifier.onnx", "rul": "rul
 TREE_BACKENDS = ("onnx-ml", "hummingbird")
 HB_STRATEGIES = ("gemm", "tree_trav")  # perf_tree_trav unrolls to hundreds of MB here
 
-# Every operator a trees="hummingbird" export may contain. All are listed as supported by
-# TensorRT's ONNX parser (onnx-tensorrt docs/operators.md). An export containing anything
-# else is refused, so a graph that TensorRT cannot parse is caught here rather than on the device.
+# Every operator a trees="hummingbird" export may contain (tree ensembles and the LSTM RUL
+# network). All are listed as supported by TensorRT's ONNX parser (onnx-tensorrt
+# docs/operators.md). An export containing anything else is refused, so a graph that TensorRT
+# cannot parse is caught here rather than on the device.
 TENSORRT_OPERATORS = frozenset({
     "Add", "Cast", "Concat", "Constant", "ConstantOfShape", "Div", "Equal", "Exp", "Expand",
-    "Gather", "GatherElements", "Gemm", "LessOrEqual", "Log", "MatMul", "Mul", "Neg", "Pow",
-    "ReduceMean", "ReduceSum", "Relu", "Reshape", "Shape", "Softmax", "Squeeze", "Sub", "Tanh",
-    "TopK", "Transpose", "Unsqueeze", "Where",
+    "Gather", "GatherElements", "Gemm", "LSTM", "LessOrEqual", "Log", "MatMul", "Mul", "Neg", "Pow",
+    "ReduceMean", "ReduceSum", "Relu", "Reshape", "Shape", "Slice", "Softmax", "Softplus", "Squeeze",
+    "Sub", "Tanh", "TopK", "Transpose", "Unsqueeze", "Where",
 })
 
 
@@ -214,7 +215,6 @@ def _hb_onnx(model, n_features: int, strategy: str):
     Input ``x`` (N, n_features); outputs ``o0``, ``o1``, ... in Hummingbird's order.
     """
     import hummingbird.ml as hb
-    import onnx
     import torch
 
     if strategy not in HB_STRATEGIES:
@@ -227,15 +227,26 @@ def _hb_onnx(model, n_features: int, strategy: str):
     with torch.no_grad():
         out = module(x)
     n_out = len(out) if isinstance(out, (tuple, list)) else 1
-    names = [f"o{i}" for i in range(n_out)]
+    return _torch_to_onnx(module, x, "x", [f"o{i}" for i in range(n_out)])
+
+
+def _torch_to_onnx(module, sample, input_name: str, output_names: list[str]):
+    """Export a torch module with a dynamic batch dimension.
+
+    Uses the TorchScript exporter: Hummingbird 0.4.12 modules do not trace under torch.export (dynamo).
+    """
+    import onnx
+    import torch
+
     buf = io.BytesIO()
-    # The TorchScript exporter: Hummingbird 0.4.12 modules do not trace under torch.export (dynamo).
-    torch.onnx.export(module, x, buf, dynamo=False, opset_version=OPSET, input_names=["x"],
-                      output_names=names, dynamic_axes={"x": {0: "N"}, **{o: {0: "N"} for o in names}})
-    return _pin_squeeze_axes(onnx.load_from_string(buf.getvalue()), n_features)
+    with torch.no_grad():
+        torch.onnx.export(module, sample, buf, dynamo=False, opset_version=OPSET, input_names=[input_name],
+                          output_names=output_names,
+                          dynamic_axes={input_name: {0: "N"}, **{o: {0: "N"} for o in output_names}})
+    return _pin_squeeze_axes(onnx.load_from_string(buf.getvalue()), input_name, tuple(sample.shape[1:]))
 
 
-def _pin_squeeze_axes(model, n_features: int):
+def _pin_squeeze_axes(model, input_name: str, row_shape: tuple[int, ...]):
     """Give every axis-less ``Squeeze`` the axes it squeezes for a batch larger than one.
 
     Hummingbird calls ``tensor.squeeze()``, which exports without axes and would also drop the
@@ -252,7 +263,7 @@ def _pin_squeeze_axes(model, n_features: int):
         probe.graph.output.append(helper.make_empty_tensor_value_info(n.input[0]))
     sess = ort.InferenceSession(probe.SerializeToString(), providers=["CPUExecutionProvider"])
     shapes = dict(zip([o.name for o in sess.get_outputs()],
-                      [a.shape for a in sess.run(None, {"x": np.zeros((3, n_features), np.float32)})]))
+                      [a.shape for a in sess.run(None, {input_name: np.zeros((3, *row_shape), np.float32)})]))
     for k, n in enumerate(targets):
         axes = [i for i, d in enumerate(shapes[n.input[0]]) if d == 1]
         name = f"squeeze_axes_{k}"
@@ -379,9 +390,30 @@ def build_classifier_graph(clf, trees: str = "onnx-ml", strategy: str = "gemm") 
     )
 
 
+def build_lstm_rul_graph(rul) -> "object":
+    """The LSTM RUL network as exported by PyTorch: sequence (N, L, F) -> rul_hours (N, 3)."""
+    import torch
+    from onnx import checker
+
+    net = rul.network()
+    m = _torch_to_onnx(net, torch.zeros(2, rul.seq_len, rul.n_in), "sequence", ["rul_hours"])
+    m.graph.name = "aeromind_rul_lstm"
+    checker.check_model(m, full_check=True)
+    return m
+
+
+def rul_input_spec(rul) -> dict:
+    """Name and per-row shape of the RUL graph's input."""
+    if getattr(rul, "input_kind", "trend") == "sequence":
+        return {"name": "sequence", "kind": "sequence", "shape": [rul.seq_len, rul.n_in]}
+    return {"name": "trend_features", "kind": "trend", "shape": [N_TREND_FEATURES]}
+
+
 def build_rul_graph(rul, trees: str = "onnx-ml", strategy: str = "gemm") -> "object":
     from onnx import TensorProto, helper
 
+    if getattr(rul, "input_kind", "trend") == "sequence":
+        return build_lstm_rul_graph(rul)  # no trees: identical for both tree backends
     nodes, inits = [], []
     if trees == "onnx-ml":
         ens, bases = _Trees.empty(), []
@@ -467,6 +499,7 @@ def export_onnx(bundle: ModelBundle, out_dir: str | Path, trees: str = "onnx-ml"
         "dtype": "float32",
         "feature_names": FEATURE_NAMES,
         "n_trend_features": N_TREND_FEATURES,
+        "rul_input": rul_input_spec(bundle.rul),
         "classes": [str(c) for c in bundle.classifier.model.classes_],
         "quantiles": list(QUANTILES),
         "score_note": "anomaly score is calibrated so 1.0 ~ 99th percentile of healthy windows",
@@ -523,11 +556,16 @@ class OnnxClassifier:
 
 
 class OnnxRUL:
-    def __init__(self, path: Path):
-        self._s = _session(path)
+    def __init__(self, path: Path, spec: dict):
+        self._s, self._input = _session(path), spec["name"]
+        self.input_kind = spec["kind"]
+        if self.input_kind == "sequence":
+            self.seq_len, self.n_in = spec["shape"]
+        self._row_shape = tuple(spec["shape"])
 
     def predict_batch(self, X: np.ndarray) -> np.ndarray:
-        return self._s.run(["rul_hours"], {"trend_features": _f32(X)})[0].astype(np.float64)
+        X = np.ascontiguousarray(X, dtype=np.float32).reshape(-1, *self._row_shape)
+        return self._s.run(["rul_hours"], {self._input: X})[0].astype(np.float64)
 
     def predict(self, x: np.ndarray) -> tuple[float, float, float]:
         p10, p50, p90 = self.predict_batch(x)[0]
@@ -547,7 +585,8 @@ class OnnxBundle:
                 raise ValueError(f"{info['file']} does not match the checksum in manifest.json")
         self.anomaly = OnnxAnomaly(d / FILES["anomaly"], self.manifest["feature_names"])
         self.classifier = OnnxClassifier(d / FILES["classifier"], self.manifest["classes"])
-        self.rul = OnnxRUL(d / FILES["rul"])
+        default = {"name": "trend_features", "kind": "trend", "shape": [N_TREND_FEATURES]}
+        self.rul = OnnxRUL(d / FILES["rul"], self.manifest.get("rul_input", default))
 
     @staticmethod
     def load(directory: str | Path) -> "OnnxBundle":
@@ -555,7 +594,10 @@ class OnnxBundle:
 
 
 def check_parity(bundle: ModelBundle, onnx_bundle: OnnxBundle, X: np.ndarray, T: np.ndarray) -> dict:
-    """Compare scikit-learn and ONNX outputs on feature rows ``X`` and trend rows ``T``."""
+    """Compare Python and ONNX outputs on feature rows ``X`` and RUL inputs ``T``.
+
+    ``T`` holds trend rows, or sequences for an LSTM bundle (see ``train.rul_inputs``).
+    """
     s_ref, s_onx = bundle.anomaly.score(X), onnx_bundle.anomaly.score(X)
     p_ref = bundle.classifier.model.predict_proba(X)
     p_onx = onnx_bundle.classifier.predict_proba(X)

@@ -14,6 +14,9 @@ Protocol (fixed in advance, not tuned on the test set):
     calibrated on the same early-life slice of the other 25%
   * trend window of 30 cycles; RUL target capped at 125 cycles
   * evaluation on the official test split: one prediction per engine at its last cycle
+  * RUL model: quantile gradient boosting on trend features ("hgb"), or a PyTorch LSTM over the
+    last 30 cycles of [sensors, anomaly score] ("lstm"); the LSTM's size was chosen on held-out
+    training engines only
 """
 
 from __future__ import annotations
@@ -27,8 +30,8 @@ from pathlib import Path
 import numpy as np
 from sklearn.cluster import KMeans
 
-from .features import trend_matrix
-from .models import AnomalyDetector, RULEstimator
+from .features import sequence_matrix, trend_matrix
+from .models import AnomalyDetector, LSTMRULEstimator, RULEstimator
 
 URL = "https://phm-datasets.s3.amazonaws.com/NASA/6.+Turbofan+Engine+Degradation+Simulation+Data+Set.zip"
 SENSORS = [2, 3, 4, 7, 8, 9, 11, 12, 13, 14, 15, 17, 20, 21]  # 1-indexed
@@ -37,6 +40,7 @@ TREND_K = 30
 HEALTHY_FRACTION = 0.2
 SUBSETS = ("FD001", "FD002", "FD003", "FD004")
 N_REGIMES = {"FD001": 1, "FD002": 6, "FD003": 1, "FD004": 6}
+LSTM_HIDDEN = 64  # lowest mean RMSE on held-out training engines (FD001, FD004) of 16/32/64; test split not used
 
 
 def download(data_dir: str | Path) -> None:
@@ -108,14 +112,21 @@ class RegimeNormaliser:
 class CmapssRUL:
     """AeroMind pipeline for run-to-failure RUL on C-MAPSS."""
 
-    def __init__(self, subset: str, seed: int = 0):
-        self.subset, self.seed = subset, seed
+    def __init__(self, subset: str, seed: int = 0, rul: str = "hgb", lstm_hidden: int = LSTM_HIDDEN):
+        if rul not in ("hgb", "lstm"):
+            raise ValueError(f"unknown rul model {rul!r}")
+        self.subset, self.seed, self.rul_kind, self.lstm_hidden = subset, seed, rul, lstm_hidden
 
     def _normalise(self, eng: Engines) -> list[np.ndarray]:
         return [self.norm.transform(s, x) for s, x in zip(eng.settings, eng.sensors)]
 
-    def _trends(self, Xs: list[np.ndarray]) -> list[np.ndarray]:
-        return [trend_matrix(X, self.anomaly.score(X), TREND_K) for X in Xs]
+    def _inputs(self, Xs: list[np.ndarray]) -> list[np.ndarray]:
+        """Per engine: trend rows (hgb) or sequences of [sensors, anomaly score] (lstm)."""
+        build = sequence_matrix if self.rul_kind == "lstm" else trend_matrix
+        return [build(X, self.anomaly.score(X), TREND_K) for X in Xs]
+
+    def _lstm(self) -> LSTMRULEstimator:
+        return LSTMRULEstimator(seq_len=TREND_K, hidden=self.lstm_hidden, seed=self.seed)
 
     def fit(self, train: Engines) -> "CmapssRUL":
         self.norm = RegimeNormaliser(N_REGIMES[self.subset], self.seed).fit(train)
@@ -128,22 +139,27 @@ class CmapssRUL:
         X_cal = np.vstack([early(Xs[i]) for i in order[:n_cal]])
         self.anomaly = AnomalyDetector(seed=self.seed).fit(X_fit, X_cal)
 
-        trends = self._trends(Xs)
-        T = np.vstack(trends)
+        T = np.concatenate(self._inputs(Xs))
         y = np.concatenate([np.minimum(np.arange(len(X), 0, -1), RUL_CAP) for X in Xs]).astype(float)
         self.n_sensor_feats = len(SENSORS)
-        self.rul = RULEstimator(seed=self.seed).fit(T, y)
-        # Ablation: same model without the anomaly-score features (sensor window means only).
-        self.rul_no_anomaly = RULEstimator(seed=self.seed).fit(T[:, : self.n_sensor_feats], y)
+        # Ablation: same model without the anomaly-score inputs (sensors only).
+        if self.rul_kind == "lstm":
+            groups = np.concatenate([np.full(len(X), k) for k, X in enumerate(Xs)])
+            self.rul = self._lstm().fit(T, y, groups)
+            self.rul_no_anomaly = self._lstm().fit(T[:, :, : self.n_sensor_feats], y, groups)
+        else:
+            self.rul = RULEstimator(seed=self.seed).fit(T, y)
+            self.rul_no_anomaly = RULEstimator(seed=self.seed).fit(T[:, : self.n_sensor_feats], y)
         self.train_median = float(np.median(y))
         return self
 
     def predict_last(self, test: Engines) -> dict[str, np.ndarray]:
         """Prediction for each test engine at its last observed cycle."""
-        last = np.stack([t[-1] for t in self._trends(self._normalise(test))])
+        last = np.stack([t[-1] for t in self._inputs(self._normalise(test))])
+        sensors_only = last[..., : self.n_sensor_feats]
         return {
             "aeromind": self.rul.predict_batch(last),  # (N,3): p10, p50, p90
-            "no_anomaly_features": self.rul_no_anomaly.predict_batch(last[:, : self.n_sensor_feats]),
+            "no_anomaly_features": self.rul_no_anomaly.predict_batch(sensors_only),
             "constant": np.full(len(last), self.train_median),
         }
 
@@ -157,9 +173,9 @@ def _metrics(pred: np.ndarray, true_capped: np.ndarray, true_raw: np.ndarray) ->
     }
 
 
-def run_subset(data_dir: str | Path, subset: str, seed: int = 0) -> dict:
+def run_subset(data_dir: str | Path, subset: str, seed: int = 0, rul: str = "hgb") -> dict:
     train, test, rul_true = load_subset(data_dir, subset)
-    model = CmapssRUL(subset, seed).fit(train)
+    model = CmapssRUL(subset, seed, rul).fit(train)
     preds = model.predict_last(test)
     capped = np.minimum(rul_true, RUL_CAP)
     q = preds["aeromind"]

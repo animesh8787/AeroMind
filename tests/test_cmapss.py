@@ -50,6 +50,20 @@ def test_regime_normaliser_standardises_each_regime():
     np.testing.assert_allclose(z.std(0), 1, atol=0.05)
 
 
+def test_lstm_end_to_end_on_fake_data(tmp_path):
+    import pytest
+
+    pytest.importorskip("torch")
+    _write_fake_subset(tmp_path, n_units=12)
+    train, test, _ = load_subset(tmp_path, "FD001")
+    model = CmapssRUL("FD001", rul="lstm", lstm_hidden=8).fit(train)
+    preds = model.predict_last(test)
+    for key in ("aeromind", "no_anomaly_features"):
+        q = preds[key]
+        assert q.shape == (12, 3) and np.isfinite(q).all()
+        assert (q[:, 0] <= q[:, 1]).all() and (q[:, 1] <= q[:, 2]).all()
+
+
 def test_pipeline_end_to_end_on_fake_data(tmp_path):
     _write_fake_subset(tmp_path, n_units=12)
     train, test, _ = load_subset(tmp_path, "FD001")

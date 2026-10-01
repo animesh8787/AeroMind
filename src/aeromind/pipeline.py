@@ -6,9 +6,11 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from .alerts import ACTIONS, PRIORITY_RANK, Advisory
 from .config import HEALTHY, HOURS_PER_WINDOW, RAW_BYTES_PER_WINDOW
-from .features import TrendTracker, extract_features
+from .features import SequenceTracker, TrendTracker, extract_features
 from .simulator import SensorWindow
 from .train import ModelBundle
 
@@ -63,6 +65,12 @@ class EdgePipeline:
 
     def __post_init__(self) -> None:
         self._trend = TrendTracker()
+        # A sequence model (LSTM) reads the last seq_len windows instead of trend features.
+        rul = self.bundle.rul
+        self._seq = None
+        if getattr(rul, "input_kind", "trend") == "sequence":
+            self._seq = SequenceTracker(rul.seq_len)
+            rul.predict_batch(np.zeros((1, rul.seq_len, rul.n_in)))  # load the network before the first window
         self._flags: deque[bool] = deque(maxlen=self.cfg.persist_of)
         self._last: tuple[int, str, str] | None = None  # (window, fault, priority) of last emission
         self.stats = PipelineStats()
@@ -101,6 +109,7 @@ class EdgePipeline:
         self.last_score = score
         self.last_assessment = None
         trend = self._trend.update(x, score)
+        seq = self._seq.update(x, score) if self._seq is not None else None
         self._flags.append(score > cfg.anomaly_threshold)
         self.last_flags = sum(self._flags)
 
@@ -114,7 +123,7 @@ class EdgePipeline:
             return None
         if conf < cfg.min_confidence:
             fault = "unclassified_anomaly"
-        p10, p50, p90 = b.rul.predict(trend)
+        p10, p50, p90 = b.rul.predict(trend if seq is None else seq)
         priority = self._priority(p10)
         self.last_assessment = Assessment(fault, conf, (p10, p50, p90), priority)
 

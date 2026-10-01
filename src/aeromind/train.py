@@ -9,8 +9,8 @@ import joblib
 import numpy as np
 
 from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RUL_CAP_WINDOWS, TREND_WINDOW
-from .features import N_FEATURES, extract_features, trend_matrix
-from .models import AnomalyDetector, FaultClassifier, RULEstimator
+from .features import N_FEATURES, extract_features, sequence_matrix, trend_matrix
+from .models import AnomalyDetector, FaultClassifier, LSTMRULEstimator, RULEstimator
 from .simulator import simulate_run
 
 
@@ -26,7 +26,7 @@ class RunData:
 class ModelBundle:
     anomaly: AnomalyDetector
     classifier: FaultClassifier
-    rul: RULEstimator
+    rul: RULEstimator | LSTMRULEstimator
 
     def save(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -44,6 +44,15 @@ class TrainConfig:
     runs_per_mode: int = 12
     life_range: tuple[int, int] = (250, 450)
     seed: int = 0
+    rul_model: str = "hgb"  # "hgb" (quantile gradient boosting on trend features) or "lstm"
+    seq_len: int = 30  # LSTM input length in windows
+
+
+def rul_inputs(rul, X: np.ndarray, scores: np.ndarray) -> np.ndarray:
+    """What a RUL model reads at each window: trend features, or a window sequence for the LSTM."""
+    if getattr(rul, "input_kind", "trend") == "sequence":
+        return sequence_matrix(X, scores, rul.seq_len)
+    return trend_matrix(X, scores, TREND_WINDOW)
 
 
 def collect_run(mode: str, life: int, seed: int) -> RunData:
@@ -80,7 +89,8 @@ def train(cfg: TrainConfig | None = None, runs: list[RunData] | None = None) -> 
     anomaly = AnomalyDetector(seed=cfg.seed).fit(X_fit, X_cal)
 
     # 2. Trend features per run, exactly as the streaming pipeline computes them.
-    trends = {id(r): trend_matrix(r.X, anomaly.score(r.X), TREND_WINDOW) for r in runs}
+    scores = {id(r): anomaly.score(r.X) for r in runs}
+    trends = {id(r): trend_matrix(r.X, scores[id(r)], TREND_WINDOW) for r in runs}
 
     # 3. Fault classifier: healthy windows plus faulted windows past 30% degradation.
     Xc, yc = [], []
@@ -97,8 +107,15 @@ def train(cfg: TrainConfig | None = None, runs: list[RunData] | None = None) -> 
     Xr = np.vstack([trends[id(r)] for r in faulted])
     yr = np.concatenate([np.minimum(r.rul_windows, RUL_CAP_WINDOWS) * HOURS_PER_WINDOW for r in faulted])
     gated = Xr[:, N_FEATURES] >= 0.8  # mean anomaly score over the trend window
-    if gated.sum() >= 200:
-        Xr, yr = Xr[gated], yr[gated]
-    rul = RULEstimator(seed=cfg.seed).fit(Xr, yr)
+    if gated.sum() < 200:
+        gated[:] = True
+    if cfg.rul_model == "lstm":
+        S = np.vstack([sequence_matrix(r.X, scores[id(r)], cfg.seq_len) for r in faulted])
+        groups = np.concatenate([np.full(len(r.X), k) for k, r in enumerate(faulted)])
+        rul = LSTMRULEstimator(seq_len=cfg.seq_len, seed=cfg.seed).fit(S[gated], yr[gated], groups[gated])
+    elif cfg.rul_model == "hgb":
+        rul = RULEstimator(seed=cfg.seed).fit(Xr[gated], yr[gated])
+    else:
+        raise ValueError(f"unknown rul_model {cfg.rul_model!r}")
 
     return ModelBundle(anomaly, classifier, rul)

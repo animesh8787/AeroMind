@@ -23,7 +23,8 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 | RUL with confidence | `models/rul.py` | Implemented (quantile regression) |
 | Actionable alerts only, bandwidth reduction | `alerts.py`, `pipeline.py` | Implemented, measured |
 | Federated fleet learning | `federated.py` | FedAvg *mechanism* only; see results |
-| LSTM / transformer-lite, PyTorch/TF | | Not implemented (scikit-learn only) |
+| LSTM, PyTorch | `models/lstm.py` | Implemented for RUL (optional; quantile LSTM over the last 30 windows) |
+| Transformer-lite, TensorFlow | | Not implemented |
 | ONNX optimized inference | `onnx_export.py` | Implemented: ONNX export + ONNX Runtime backend (CPU); see below |
 | TensorRT | `onnx_export.py` | TensorRT-compatible ONNX export (Hummingbird); **not yet built or run with TensorRT** |
 | Jetson, FPGA DSP, OTA updates | | Not implemented |
@@ -43,6 +44,11 @@ python -m aeromind demo --backend onnx           # same pipeline, models run in 
 python -m aeromind dashboard                     # writes artifacts/dashboard.html (open in a browser)
 python -m aeromind federated                     # FedAvg autoencoder demo
 python -m aeromind cmapss                        # NASA C-MAPSS RUL benchmark (~2.5 min, downloads ~12 MB)
+
+# Optional PyTorch LSTM for remaining useful life (pip install -e ".[lstm]")
+python -m aeromind train --rul lstm --model artifacts/bundle-lstm.joblib    # ~30 s
+python -m aeromind evaluate --model artifacts/bundle-lstm.joblib
+python -m aeromind cmapss --rul lstm             # ~20 min on 4 CPU cores
 pytest
 ```
 
@@ -109,6 +115,57 @@ one prediction per test engine at its last observed cycle on the **official test
 - The p10-p90 interval is nominally 80%. Coverage is 0.70-0.80, so it is still somewhat over-confident, though much closer than on the in-house simulator.
 - This is a simple tree-based model on hand-built window features. It is **not** compared against published deep-learning results here, and no claim is made that it is competitive with them.
 - Only the RUL part of the pipeline is exercised: C-MAPSS has no labelled fault types, no raw vibration/acoustic signals and no edge hardware, so it says nothing about fault classification, bandwidth or on-aircraft latency.
+
+## LSTM model for remaining useful life (PyTorch)
+
+`models/lstm.py` adds an optional RUL model: a single-layer PyTorch LSTM that reads the last 30
+windows of [features, anomaly score] and outputs p10/p50/p90. The head adds non-negative gaps to p10,
+so the quantiles are always ordered. It is trained with the pinball (quantile) loss, with dropout,
+weight decay and early stopping on held-out *runs* (never held-out windows of a training run). It
+replaces only the RUL step: detection, the persistence gate and fault classification are unchanged.
+The pipeline keeps a rolling 30-window history when the bundle's RUL model is an LSTM.
+
+Model size was chosen on held-out training data only, never on the evaluation runs or the C-MAPSS
+test split: 16 units on the simulator (lowest pinball loss over three held-out splits of training runs)
+and 64 units on C-MAPSS (lowest mean RMSE on held-out FD001/FD004 training engines, of 16/32/64).
+
+**C-MAPSS** (same protocol as above, official test split, mean ± std over 3 seeds):
+
+| Subset | RMSE, LSTM | RMSE, gradient boosting (above) | MAE, LSTM | NASA score, LSTM | p10-p90 coverage, LSTM | RMSE, LSTM without anomaly score |
+|---|---|---|---|---|---|---|
+| FD001 | **15.6 ± 0.7** | 20.0 ± 0.7 | 11.0 ± 0.3 | 766 | 0.78 ± 0.04 | 14.3 ± 0.3 |
+| FD002 | **14.8 ± 0.1** | 17.8 ± 0.2 | 9.8 ± 0.1 | 1,630 | 0.82 ± 0.05 | 15.3 ± 0.7 |
+| FD003 | **15.6 ± 0.3** | 21.3 ± 0.4 | 10.5 ± 0.4 | 1,279 | 0.77 ± 0.03 | 14.8 ± 0.5 |
+| FD004 | **15.5 ± 0.3** | 20.5 ± 0.2 | 10.2 ± 0.1 | 1,656 | 0.76 ± 0.05 | 16.0 ± 0.3 |
+
+- The LSTM is better than gradient boosting on every subset, by 3 to 6 cycles RMSE, and roughly halves
+  the NASA score. Its p10-p90 intervals cover 0.76-0.82, close to the nominal 0.80.
+- The anomaly score **does not help the LSTM**: without it, RMSE is better on FD001 and FD003 and worse
+  on FD002 and FD004. The LSTM reads the raw sensor sequence and gets little from the extra input. (For
+  gradient boosting the anomaly features did help; see the ablation above.)
+- Against uncapped true RUL, RMSE is 16.5 / 25.2 / 16.6 / 26.2.
+- Published deep models on C-MAPSS report FD001 RMSE of roughly 11-16. These figures are in that range but
+  were not produced under identical conditions, so no ranking is claimed.
+
+**Simulator** (`evaluate`, same 6 runs per mode as above):
+
+| Fault | RUL MAE, gradient boosting (h) | RUL MAE, LSTM (h) | p10-p90 coverage, gradient boosting | p10-p90 coverage, LSTM |
+|---|---|---|---|---|
+| bearing_wear | 6.4 | 8.1 | 0.87 | 0.99 |
+| oil_contamination | 8.5 | 8.3 | 0.47 | 0.89 |
+| overheating | 9.8 | 9.8 | 0.63 | 0.84 |
+| electrical_fault | 6.5 | 5.8 | 0.58 | 0.96 |
+| pressure_leak | 8.5 | 8.9 | 0.57 | 0.91 |
+
+Detection, lead times, classification and false advisories are identical, since the LSTM only replaces
+RUL. Median error is about the same; the gain is in the intervals, which no longer under-cover (on
+bearing wear they are now wider than needed). Per-window latency on one CPU thread: 7.7 ms mean with
+PyTorch, **0.57 ms with ONNX Runtime**, against 9.6 ms for the scikit-learn pipeline.
+
+The LSTM exports with the rest of the bundle (`export-onnx --model artifacts/bundle-lstm.joblib`):
+`rul.onnx` is then a 14 KB graph with input `sequence` (N, 30, 20), recorded in `manifest.json`. It
+matches PyTorch to within 5e-5 h at every batch size, uses the standard ONNX `LSTM` operator (on
+TensorRT's supported list), and gives identical `evaluate` results to the PyTorch model.
 
 ## ONNX export
 
@@ -229,7 +286,7 @@ src/aeromind/
   config.py        sensor/window constants
   simulator.py     synthetic sensors, fault injection, per-aircraft profiles
   features.py      feature extraction + streaming/offline trend features
-  models/          anomaly.py, classifier.py, rul.py
+  models/          anomaly.py, classifier.py, rul.py, lstm.py
   train.py         simulate -> train -> ModelBundle
   pipeline.py      EdgePipeline: window in, advisory out (gating, de-duplication, priority)
   alerts.py        Advisory schema, recommended actions
@@ -239,12 +296,12 @@ src/aeromind/
   federated.py     FedAvg autoencoder + demo
   cmapss.py        NASA C-MAPSS loader and RUL benchmark
   cli.py           train | export-onnx | demo | evaluate | dashboard | federated | cmapss
-tests/            test_core.py, test_cmapss.py, test_onnx_dashboard.py
+tests/            test_core.py, test_cmapss.py, test_onnx_dashboard.py, test_lstm.py
 ```
 
 ## Suggested next steps
 
 1. Add public bearing run-to-failure data (e.g. NASA IMS / FEMTO) to exercise the vibration and classification path on real signals.
-2. Re-calibrate the RUL intervals (e.g. conformal prediction); coverage is currently below nominal.
+2. Re-calibrate the RUL intervals (e.g. conformal prediction): the gradient-boosting intervals under-cover; the LSTM's are close to nominal on C-MAPSS but too wide for bearing wear on the simulator.
 3. Build the Hummingbird graphs with TensorRT on a Jetson, check parity on the device, and benchmark GEMM against tree traversal.
 4. Re-test federation with realistic, non-IID fleet data before claiming a benefit.
