@@ -107,6 +107,15 @@ def _cmd_serve(a) -> None:
     uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
 
 
+def _cmd_roi(a) -> None:
+    from .roi import Assumptions, sensitivity, simulate
+
+    ev = evaluate(_load_backend(a), a.runs_per_mode, a.healthy_runs, 0, a.phases)
+    out = simulate(ev, Assumptions(fleet_size=a.fleet, horizon_fh=a.horizon, seed=a.seed))
+    out["sensitivity"] = sensitivity(ev)
+    print(json.dumps(out, indent=2))
+
+
 def _cmd_federated(a) -> None:
     print(json.dumps(federated_demo(a.clients, a.seed), indent=2))
 
@@ -181,6 +190,16 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("--port", type=int, default=8000)
     v.add_argument("--speed", type=float, default=4.0, help="windows per second per aircraft")
     v.set_defaults(fn=_cmd_serve)
+
+    r = sub.add_parser("roi", help="fleet maintenance simulation: reactive vs fixed-interval vs AeroMind")
+    _add_backend_args(r)
+    r.add_argument("--phases", action="store_true")
+    r.add_argument("--runs-per-mode", type=int, default=6)
+    r.add_argument("--healthy-runs", type=int, default=6)
+    r.add_argument("--fleet", type=int, default=30)
+    r.add_argument("--horizon", type=float, default=3000.0, help="flight hours per aircraft")
+    r.add_argument("--seed", type=int, default=0)
+    r.set_defaults(fn=_cmd_roi)
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)
