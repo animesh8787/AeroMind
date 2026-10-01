@@ -30,6 +30,30 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 | Jetson, FPGA DSP, OTA updates | | Not implemented |
 | ACARS / SWIM, MRO connectors | | Not implemented (advisories are plain JSON) |
 
+## Live demo: ground station
+
+```bash
+pip install -e ".[app]"
+python -m aeromind serve          # first start trains a flight-phase model (~20 s); then open http://127.0.0.1:8000
+```
+
+Windows (PowerShell) is the same: `pip install -e ".[app]"` then `python -m aeromind serve`. Everything runs
+offline; no internet is needed after installation.
+
+Six fictional aircraft (VT-AMA01 to VT-AMA06) fly simulated flights through taxi, take-off, climb, cruise,
+descent and taxi, each with its own edge pipeline. Pick an aircraft and use the buttons on the right:
+
+- **Component faults** (bearing wear, oil contamination, overheating, electrical fault, pressure leak): the
+  anomaly score rises, the persistence gate opens, the classifier names the fault, RUL appears and falls,
+  computed evidence appears (e.g. the bearing outer-race frequency in the envelope spectrum), and the
+  maintenance decision, work order and ACARS message follow.
+- **Sensor failures** (stuck temperature sensor, vibration drift, pressure spikes, dropout): the sensor is
+  flagged `SENSOR_FAULT` and masked; no component fault is raised.
+- **Over-the-air update:** push a signed model (accepted), push a tampered one (rejected; the fleet stays on
+  the last valid model), roll back.
+
+All aircraft and data are simulated; decisions follow a configurable prototype policy, not a certified procedure.
+
 ## Quick start
 
 ```bash
