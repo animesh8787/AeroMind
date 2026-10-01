@@ -146,8 +146,8 @@ class SensorHealthConfig:
     confirm_of: int = 3
     clear_after: int = 5  # consecutive clean windows before a faulty channel is restored
     spike_z: float = 12.0  # robust z (|x - median| / 1.4826 MAD) for a slow-channel spike
-    bias_ratio: float = 0.5  # |mean| / std for AC channels
-    bias_min: float = 0.3
+    bias_ratio: float = 0.2  # |mean| / std for AC channels
+    bias_min: float = 0.1
 
 
 @dataclass
@@ -157,7 +157,20 @@ class ChannelState:
     clean_run: int = 0
     last_checks: tuple[str, ...] = ()
     last_good: np.ndarray | None = None
+    good_by_phase: dict = field(default_factory=dict)  # last validated window per flight phase
     since: int | None = None
+    # (1, load, OAT, altitude kft) -> channel level, on validated windows, for context-aware masking.
+    ctx: deque = field(default_factory=lambda: deque(maxlen=300))
+    level: deque = field(default_factory=lambda: deque(maxlen=300))
+
+
+def _level(name: str, x: np.ndarray) -> float:
+    """Mean for slow channels; AC level (standard deviation) for AC-coupled channels."""
+    return float(np.std(x)) if name in AC_CHANNELS else float(np.mean(x))
+
+
+def _context(w: SensorWindow) -> list[float]:
+    return [1.0, w.load, w.ambient_c, w.altitude_ft / 1000.0]
 
 
 def check_channel(name: str, x: np.ndarray, prev: np.ndarray | None, prev_mean: float | None,
@@ -227,11 +240,34 @@ class SensorHealthMonitor:
             if st.faulty or checks:
                 # Mask: suspect data never reaches the models. Before confirmation a single bad
                 # window is masked too, so one glitch cannot move the anomaly score.
-                lo, hi = RANGES[c]
-                masked[c] = st.last_good if st.last_good is not None else np.clip(np.nan_to_num(x), lo, hi)
+                masked[c] = self._substitute(c, st, w, x)
             else:
                 st.last_good = x
+                st.good_by_phase[w.phase] = x
+                st.ctx.append(_context(w))
+                st.level.append(_level(c, x))
         return (replace(w, **masked) if masked else w), out
+
+    def _substitute(self, c: str, st: ChannelState, w: SensorWindow, x: np.ndarray) -> np.ndarray:
+        """Stand-in for a masked channel.
+
+        AC-coupled channels (vibration, acoustic, current): the last validated waveform recorded in
+        the same flight phase, with any DC removed. Their noise-band energies are very stable, so
+        rescaling a waveform would itself look anomalous; a same-regime copy does not.
+        Slow channels: the last validated readings moved to the level this aircraft's healthy history
+        predicts for the current load, outside air temperature and altitude (least squares).
+        """
+        lo, hi = RANGES[c]
+        if st.last_good is None:
+            return np.clip(np.nan_to_num(x), lo, hi)
+        if c in AC_CHANNELS:
+            g = st.good_by_phase.get(w.phase, st.last_good)
+            return g - g.mean()
+        if len(st.level) < 20:
+            return st.last_good
+        coef = np.linalg.lstsq(np.asarray(st.ctx), np.asarray(st.level), rcond=None)[0]
+        g = st.last_good
+        return g - g.mean() + float(np.asarray(_context(w)) @ coef)
 
     def _advisory(self, w: SensorWindow, channel: str, status: str, checks) -> SensorAdvisory:
         action = (f"Inspect/replace {channel} sensor and harness; component monitoring continues without it"

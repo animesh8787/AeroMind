@@ -97,6 +97,16 @@ def _cmd_dashboard(a) -> None:
     print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB) in {time.time() - t0:.0f}s; open it in a browser")
 
 
+def _cmd_serve(a) -> None:
+    import uvicorn
+
+    from .server.app import create_app
+
+    app = create_app(a.onnx_dir, a.workdir, a.speed)
+    print(f"AeroMind ground station: http://{a.host}:{a.port}  (Ctrl+C to stop)", flush=True)
+    uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
+
+
 def _cmd_federated(a) -> None:
     print(json.dumps(federated_demo(a.clients, a.seed), indent=2))
 
@@ -163,6 +173,14 @@ def main(argv: list[str] | None = None) -> None:
     _add_backend_args(h)
     h.add_argument("--out", default="artifacts/dashboard.html")
     h.set_defaults(fn=_cmd_dashboard, backend="onnx")
+
+    v = sub.add_parser("serve", help="live ground station: simulated fleet, fault injection, OTA (needs .[app])")
+    v.add_argument("--onnx-dir", default="artifacts/onnx-phases", help="phase-aware ONNX model (trained if missing)")
+    v.add_argument("--workdir", default="artifacts/ground", help="keys, signed packages and installed models")
+    v.add_argument("--host", default="127.0.0.1")
+    v.add_argument("--port", type=int, default=8000)
+    v.add_argument("--speed", type=float, default=4.0, help="windows per second per aircraft")
+    v.set_defaults(fn=_cmd_serve)
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)

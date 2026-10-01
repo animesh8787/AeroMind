@@ -232,10 +232,12 @@ class LiveAircraft:
     and fails at ``t0 + L``, exactly like ``simulate_run``.
     """
 
-    def __init__(self, seed: int, tail: TailProfile | None = None):
+    def __init__(self, seed: int, tail: TailProfile | None = None, phase_offset: int = 0):
         self.rng = np.random.default_rng(seed)
         self.tail = tail if tail is not None else TailProfile.random(self.rng)
         self._flights = _flight_phases(np.random.default_rng(seed + 17))
+        for _ in range(phase_offset):  # aircraft in a fleet are at different points of their day
+            next(self._flights)
         self.t, self.ar = 0, 0.0
         self.mode, self.fault_start, self.fault_life = HEALTHY, 0, None
         self.phase_override: str | None = None
