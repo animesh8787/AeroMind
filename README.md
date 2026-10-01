@@ -39,10 +39,13 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 - **Explains itself:** advisories carry computed physics evidence (bearing defect frequencies, current THD).
 - **Fits the downlink:** every advisory fits one ACARS block (max 141 of 220 characters).
 - **Decision + ROI:** P(failure before next check) → ground / replace / defer; fleet ROI with a sensitivity table.
+- **Fleet learning:** federated averaging lets an aircraft recognise fault types only other aircraft have seen (91%, local-only 0%).
+- **Names the fault:** correct at the first classified alert in 29 of 30 flight-phase runs (context-residual classifier).
 
 Docs: [architecture](docs/ARCHITECTURE.md) · [technical report](docs/TECHNICAL_REPORT.md) ·
 [demo script](docs/DEMO_SCRIPT.md) · [pitch metrics](docs/PITCH_METRICS.md) · [judge Q&A](docs/JUDGE_QA.md) ·
-[feature matrix](docs/FEATURE_MATRIX.md) · [Jetson kit](deploy/jetson/README.md)
+[feature matrix](docs/FEATURE_MATRIX.md) · [Jetson kit](deploy/jetson/README.md) ·
+[full evidence report](docs/EVIDENCE_REPORT.md) · [evidence slides](docs/AeroMind-Prototype-Evidence.pptx)
 
 ## Live demo: ground station
 
@@ -100,6 +103,10 @@ represents one 1 s snapshot per 0.5 flight hours (`config.py`).
 
 ## Results on the simulator
 
+> Original baseline: steady simulator, before flight phases, sensor health, context residuals and conformal
+> intervals. Current numbers for every component are in [docs/EVIDENCE_REPORT.md](docs/EVIDENCE_REPORT.md)
+> (`python -m aeromind report`).
+
 `python -m aeromind evaluate` (6 fresh runs per mode, 6 healthy runs; seeds disjoint from training):
 
 | Fault | Detected | Lead time, first alert (h) | Lead time, first *classified* alert (h) | First classified alert correct | RUL MAE (h) | p10-p90 coverage |
@@ -121,7 +128,11 @@ How to read this honestly:
 - The RUL p10-p90 interval is nominally 80% but **under-covers** (0.47-0.87). The uncertainty bands are over-confident.
 - With only 6 runs per mode these figures are noisy. They are a smoke test, not a benchmark.
 
-### Federated learning: no benefit shown
+### Federated learning: no benefit for anomaly detection (but see rare-fault sharing)
+
+> For fault *classification*, `aeromind federated --rare-fault` does show a benefit: an aircraft that has seen
+> only 2 of 5 fault types recognises the other 3 with 91% accuracy after federated averaging (local-only 0%);
+> see the evidence report.
 
 `python -m aeromind federated` trains an autoencoder with FedAvg across 5 simulated aircraft (only weights
 and scaler statistics are shared) and tests it on an unseen aircraft, on early faults (10-30% degradation).

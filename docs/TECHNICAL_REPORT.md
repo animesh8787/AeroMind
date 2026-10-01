@@ -23,15 +23,17 @@ engine, work orders, fleet ROI and signed over-the-air model updates.
 ## 3. Results
 
 **Simulator, flight phases** (6 runs per fault, phase-aware model, conformal RUL): every fault detected
-(6/6 each), median warning 75–126 h before failure, 0 false advisories per 1,000 healthy windows, 607×
-less downlink than raw data, RUL interval coverage 0.81–0.99 (nominal 0.80). Weakness: oil contamination
-is classified correctly at the first classified alert in only 2 of 6 runs.
+(6/6 each), median warning 75–163 h before failure, 0 false advisories per 1,000 healthy windows, 545×
+less downlink than raw data, RUL interval coverage 0.74–0.99 (nominal 0.80). The fault is named correctly at the
+first classified alert in 29 of 30 runs; oil contamination went from 2/6 to 5/6 once the classifier was given
+context residuals (each feature's deviation from its healthy value at the current load, OAT and altitude).
 
 **Flight-phase awareness:** a model trained without flight phases has its anomaly gate open on 98.6% of
 healthy flight windows; the phase-aware model on 0.0%.
 
 **Sensor health:** 0 false sensor faults in 5,400 clean windows; injected sensor failures detected in
-1–2 windows (vibration drift 10–11), with 0 component advisories and the anomaly gate closed (0%).
+1–2 windows (vibration drift 10–11), with 0 component advisories and the anomaly gate closed (0%). With
+sensor health switched off, the same failures cause up to 38 false component advisories per scenario.
 
 **NASA IMS bearings (real data):** on the bearing that failed (outer race), the anomaly gate first opens
 89.0 h into the 163.8 h test (74.8 h before the end) and the envelope BPFO signature persists from 89.3 h;
@@ -40,11 +42,15 @@ which bearing (others on the same shaft alarm later, one slightly earlier), but 
 1 has the strongest line in 98.9% of snapshots once it appears.
 
 **NASA C-MAPSS** (official test split, 3 seeds): gradient boosting + conformal interval RMSE 19.4 / 17.7 /
-22.3 / 20.1 (constant baseline 48.5–62.9), interval coverage 0.72–0.84. The optional LSTM reaches RMSE
-14.8–15.6 (README).
+22.3 / 20.1 (constant baseline 48.5–62.9), interval coverage 0.72–0.84. The optional PyTorch LSTM with a
+conformal interval reaches RMSE 14.6–16.1 (coverage 0.71–0.87).
 
 **Edge:** 1.8 MB of models; ~0.02 ms per model call and ~1.2 ms per window on one CPU thread (laptop/cloud
 CPU, not Jetson). INT8 quantisation saved no space and shifted 3% of anomaly decisions, so FP32 is kept.
+
+**Fleet learning** (simulated, 3 seeds): each aircraft has seen 2 of 5 fault types; with federated averaging
+(weights only) it recognises the fault types it never saw with 91% accuracy (local-only 0%, pooled raw data
+100%), at the cost of 92% vs 100% on its own fault types.
 
 **Fleet ROI** (30 aircraft × 3,000 FH; costs and failure rates assumed): AeroMind −98.6% maintenance cost vs
 reactive as measured on the simulator; −34.4% under harsh assumptions (67% detection, 10% of the warning
@@ -54,11 +60,9 @@ time, 5 false advisories per 1,000 windows, $10k/h AOG). Fixed-interval replacem
 
 Simulated faults are cleaner than real ones; IMS is one test rig and C-MAPSS is simulated engines; no flight
 data, no hardware-in-the-loop, no Jetson or TensorRT run, no certification work. Decision thresholds and
-cost figures are prototype assumptions. Federated learning is implemented as a mechanism only and showed
-no benefit in our setup.
+cost figures are prototype assumptions. Fleet learning was tested on simulated aircraft only.
 
 ## 5. Next steps
 
 1. Run the Jetson kit (`deploy/jetson`) and measure latency and power. 2. Add real multi-sensor data
-(e.g. N-CMAPSS, more bearing sets). 3. Improve oil-contamination classification under flight phases.
-4. Partner data and an MRO integration pilot.
+(e.g. N-CMAPSS, more bearing sets). 3. Partner data and an MRO integration pilot.

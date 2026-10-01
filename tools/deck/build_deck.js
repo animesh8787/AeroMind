@@ -188,7 +188,7 @@ function footnote(slide, text) {
     ], { x: 0.4, y: 1.4, w: 5.6, h: 3.5, barDir: "col", barGrouping: "clustered", showTitle: true,
       title: `Classification accuracy (%), mean of ${f.seeds} seeds`, titleFontSize: 11, titleColor: NAVY,
       chartColors: ["C9CFDB", BLUE, "8FA7DE"], showValue: true, dataLabelPosition: "outEnd", dataLabelFontSize: 8, dataLabelFormatCode: "0",
-      valAxisMaxVal: 110, showLegend: true, legendPos: "b", legendFontSize: 9, catAxisLabelFontSize: 9, valAxisLabelFontSize: 8,
+      valAxisMinVal: 0, valAxisMaxVal: 110, showLegend: true, legendPos: "b", legendFontSize: 9, catAxisLabelFontSize: 9, valAxisLabelFontSize: 8,
       catAxisLabelColor: MUTED, valAxisLabelColor: MUTED, valGridLine: { color: "E3E6EE", size: 0.5 }, catGridLine: { style: "none" } });
   }
   s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 6.25, y: 1.45, w: 3.35, h: 3.4, fill: { color: CARD }, rectRadius: 0.08, line: { color: CARD } });

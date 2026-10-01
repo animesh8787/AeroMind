@@ -25,5 +25,9 @@ envelope-spectrum peak at the bearing outer-race defect frequency, plus the most
 **Certification?** Not addressed. Decisions follow a configurable prototype policy; a real system would go
 through DO-178C/DO-254-style assurance and the regulator's AI guidance.
 
-**Weaknesses?** Oil contamination is often first classified as unclassified/another fault under flight
-phases (2/6); federated learning showed no benefit; one real bearing test rig only.
+**Weaknesses?** One real bearing test rig only; no flight data; one oil-contamination run in six is still
+misnamed at its first classified alert; RUL intervals for bearing wear are wider than needed (coverage 0.99).
+
+**Does federated learning actually help?** For anomaly detection it did not in our tests. For fault
+classification it does: an aircraft that has seen only 2 of 5 fault types recognises the other 3 with 91%
+accuracy after federated averaging, without any raw data leaving the aircraft (simulated fleet).
