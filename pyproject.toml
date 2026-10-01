@@ -15,13 +15,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+onnx = ["onnx>=1.15", "onnxruntime>=1.17"]
+dev = ["pytest>=8", "onnx>=1.15", "onnxruntime>=1.17"]
 
 [project.scripts]
 aeromind = "aeromind.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+aeromind = ["dashboard_template.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

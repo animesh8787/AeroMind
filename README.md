@@ -24,7 +24,8 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 | Actionable alerts only, bandwidth reduction | `alerts.py`, `pipeline.py` | Implemented, measured |
 | Federated fleet learning | `federated.py` | FedAvg *mechanism* only; see results |
 | LSTM / transformer-lite, PyTorch/TF | | Not implemented (scikit-learn only) |
-| ONNX / TensorRT, Jetson, FPGA DSP, OTA updates | | Not implemented |
+| ONNX optimized inference | `onnx_export.py` | Implemented: ONNX export + ONNX Runtime backend (CPU); see below |
+| TensorRT, Jetson, FPGA DSP, OTA updates | | Not implemented |
 | ACARS / SWIM, MRO connectors | | Not implemented (advisories are plain JSON) |
 
 ## Quick start
@@ -35,6 +36,9 @@ python -m aeromind train                         # ~20 s, writes artifacts/bundl
 python -m aeromind demo --mode bearing_wear      # stream one run-to-failure through the pipeline
 python -m aeromind demo --mode healthy --life 300
 python -m aeromind evaluate                      # closed-loop metrics (~3 min)
+python -m aeromind export-onnx                   # writes artifacts/onnx/ and checks parity with scikit-learn
+python -m aeromind demo --backend onnx           # same pipeline, models run in ONNX Runtime
+python -m aeromind dashboard                     # writes artifacts/dashboard.html (open in a browser)
 python -m aeromind federated                     # FedAvg autoencoder demo
 python -m aeromind cmapss                        # NASA C-MAPSS RUL benchmark (~2.5 min, downloads ~12 MB)
 pytest
@@ -104,6 +108,63 @@ one prediction per test engine at its last observed cycle on the **official test
 - This is a simple tree-based model on hand-built window features. It is **not** compared against published deep-learning results here, and no claim is made that it is competitive with them.
 - Only the RUL part of the pipeline is exercised: C-MAPSS has no labelled fault types, no raw vibration/acoustic signals and no edge hardware, so it says nothing about fault classification, bandwidth or on-aircraft latency.
 
+## ONNX export
+
+`python -m aeromind export-onnx` writes three float32 graphs and a manifest to `artifacts/onnx/`:
+
+| File | Input | Output | Contents |
+|---|---|---|---|
+| `anomaly.onnx` (~260 KB) | features (N,19) | score (N), z (N,19) | scaler, Isolation Forest, autoencoder and the healthy calibration, all in-graph |
+| `classifier.onnx` (~680 KB) | features (N,19) | probabilities (N,6) | gradient-boosted trees + softmax; class names in `manifest.json` |
+| `rul.onnx` (~875 KB) | trend features (N,22) | rul_hours (N,3) | the three quantile models in one ensemble, sorted and clipped at 0 |
+
+Feature extraction, trend tracking, the persistence gate and advisory formatting stay in Python
+(`pipeline.py`); only the learned models are exported. `manifest.json` records SHA-256 hashes,
+and `OnnxBundle` refuses to load a file that does not match. `OnnxBundle` is a drop-in for
+`ModelBundle`, so `demo`, `evaluate` and `dashboard` all take `--backend onnx`.
+
+The graphs are written directly with `onnx.helper` rather than skl2onnx: skl2onnx 1.20 fails on
+scikit-learn 1.9's HistGradientBoosting models.
+
+Parity with scikit-learn on 1,800 fresh simulated windows (all modes):
+
+- Class probabilities differ by at most 7e-7; the predicted class agrees on every window.
+- Anomaly score: median difference 5e-7. One window in 1,800 landed within float32 rounding of an
+  Isolation Forest split and moved by 0.02. Every threshold decision agrees.
+- RUL: median difference 2e-5 h. Four windows in 1,800 took the other branch of a split and moved by up to 0.4 h.
+
+End to end, `python -m aeromind evaluate --backend onnx` gives **identical** per-mode results to the
+scikit-learn backend (detection, lead times, classification, RUL error and coverage, false advisories,
+downlink). Only latency changes. Both runs used one thread (`OMP_NUM_THREADS=1`) on the same cloud CPU,
+and the times cover the whole `process()` call, feature extraction included:
+
+| Backend | Mean ms / window | Max ms / window | Full `evaluate` run |
+|---|---|---|---|
+| scikit-learn | 9.55 | 30.0 | 1 min 59 s |
+| ONNX Runtime | 0.53 | 5.6 | 10 s |
+
+Most of the gain is per-call overhead: scikit-learn is slow at predicting one row at a time. These
+are cloud-CPU numbers, not Jetson numbers.
+
+What this does not cover: the tree models use the ONNX-ML `TreeEnsembleRegressor` operator, which
+ONNX Runtime runs but **TensorRT does not support**. On a Jetson they would run on the CPU through
+ONNX Runtime unless rewritten as tensor operations. Nothing here has been run on edge hardware.
+
+## Demo dashboard
+
+`python -m aeromind dashboard` runs five fault scenarios and one healthy run through the edge
+pipeline (ONNX backend by default; seeds disjoint from training and evaluation) and writes
+`artifacts/dashboard.html`, a single self-contained file (~1.2 MB) that needs no server. It shows:
+
+- crew/MRO status (NOMINAL, WATCH, ADVISORY, URGENT, CRITICAL), fault type and confidence;
+- the anomaly score against its threshold, with the persistence gate shaded;
+- predicted RUL (p50 with p10–p90 band) against the simulator's ground truth;
+- each advisory as it is sent, with its exact JSON payload and size, and the running downlink total vs raw;
+- the six sensor families and the raw vibration waveform of the current window;
+- per-window inference latency, measured on the machine that generated the page.
+
+Press Play to replay a run, drag the slider to scrub, or click a chart or advisory to jump to that window.
+
 ## Layout
 
 ```
@@ -116,15 +177,17 @@ src/aeromind/
   pipeline.py      EdgePipeline: window in, advisory out (gating, de-duplication, priority)
   alerts.py        Advisory schema, recommended actions
   evaluate.py      closed-loop evaluation
+  onnx_export.py   ONNX graphs, ONNX Runtime bundle, parity check
+  dashboard.py     self-contained HTML replay (+ dashboard_template.html)
   federated.py     FedAvg autoencoder + demo
   cmapss.py        NASA C-MAPSS loader and RUL benchmark
-  cli.py           train | demo | evaluate | federated | cmapss
-tests/            test_core.py, test_cmapss.py
+  cli.py           train | export-onnx | demo | evaluate | dashboard | federated | cmapss
+tests/            test_core.py, test_cmapss.py, test_onnx_dashboard.py
 ```
 
 ## Suggested next steps
 
 1. Add public bearing run-to-failure data (e.g. NASA IMS / FEMTO) to exercise the vibration and classification path on real signals.
 2. Re-calibrate the RUL intervals (e.g. conformal prediction); coverage is currently below nominal.
-3. Export models (ONNX) and benchmark on target hardware.
+3. Benchmark the ONNX models on target hardware; rewrite the tree ensembles as tensor ops (e.g. Hummingbird) if they must run under TensorRT.
 4. Re-test federation with realistic, non-IID fleet data before claiming a benefit.

@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AeroMind Edge Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Semi+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: a status strip that reads like a crew-alerting display on top, the two decision charts
+   beside the advisory log, and the six sensor families as small multiples underneath. */
+:root {
+  --bg: #eef2f4;
+  --surface: #fbfcfc;
+  --ink: #0e1a21;
+  --ink-2: #44525b;
+  --muted: #74828a;
+  --grid: #dfe5e8;
+  --axis: #c3ccd1;
+  --line: rgba(14, 26, 33, 0.10);
+  --accent: #2a78d6;
+  --accent-wash: rgba(42, 120, 214, 0.12);
+  --truth: #eb6834;
+  --gate-wash: rgba(250, 178, 25, 0.16);
+  /* Status (fixed across themes; always paired with a text label). */
+  --ok: #0ca30c;
+  --watch: #8a979e;
+  --advisory: #fab219;
+  --urgent: #ec835a;
+  --critical: #d03b3b;
+  --on-status: #10181c;
+  --font-display: "Saira Semi Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 6px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a1014; --surface: #111a20; --ink: #e6edf0; --ink-2: #b4c1c8; --muted: #84939b;
+    --grid: #1f2b33; --axis: #33424b; --line: rgba(230, 237, 240, 0.10);
+    --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.16); --truth: #d95926;
+    --gate-wash: rgba(250, 178, 25, 0.12); --watch: #6f7d85;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a1014; --surface: #111a20; --ink: #e6edf0; --ink-2: #b4c1c8; --muted: #84939b;
+  --grid: #1f2b33; --axis: #33424b; --line: rgba(230, 237, 240, 0.10);
+  --accent: #3987e5; --accent-wash: rgba(57, 135, 229, 0.16); --truth: #d95926;
+  --gate-wash: rgba(250, 178, 25, 0.12); --watch: #6f7d85;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 var(--font-body);
+  padding-inline: max(16px, env(safe-area-inset-left, 0px));
+  padding-block: 0 32px;
+}
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; gap: 16px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: 22px; letter-spacing: 0.02em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
+.sub { color: var(--ink-2); font-size: 13px; }
+.mono { font-family: var(--font-mono); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Header */
+header.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); padding-block: 14px 10px; border-bottom: 1px solid var(--line);
+  display: grid; gap: 10px;
+}
+.titlerow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.chip {
+  font: 500 12px/1 var(--font-mono); padding: 5px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); white-space: nowrap;
+}
+.chip.sim { border-color: var(--advisory); }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.controls label { font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+select, button {
+  font: 500 13px var(--font-body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--axis); border-radius: var(--radius); padding: 6px 10px; cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 84px; }
+button:focus-visible, select:focus-visible, input:focus-visible, .adv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scrub { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.scrub input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.clock { font: 500 13px var(--font-mono); color: var(--ink-2); white-space: nowrap; }
+
+/* Status strip */
+.strip { display: grid; grid-template-columns: minmax(240px, 1.3fr) repeat(4, minmax(150px, 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.cell { background: var(--surface); padding: 12px 14px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.cell .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+.cell .v { font: 600 24px/1.15 var(--font-body); font-variant-numeric: tabular-nums; }
+.cell .v small { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.cell .d { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.status { display: flex; gap: 12px; align-items: center; }
+.pill {
+  font: 600 15px/1 var(--font-display); letter-spacing: 0.08em; padding: 8px 12px; border-radius: 4px;
+  color: var(--on-status); background: var(--ok); white-space: nowrap; display: inline-flex; gap: 7px; align-items: center;
+}
+.pill svg { width: 14px; height: 14px; }
+.fault { font: 500 15px var(--font-mono); overflow-wrap: anywhere; }
+.meter { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); width: 0; }
+
+/* Panels */
+.main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; }
+.charts { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.phead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-left: auto; }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.key i { display: inline-block; width: 16px; height: 2px; background: var(--accent); }
+.key i.band { height: 10px; background: var(--accent-wash); border-top: 2px solid var(--accent); }
+.key i.truth { background: var(--truth); }
+.key i.gate { height: 10px; background: var(--gate-wash); }
+.key i.thr { background: var(--ink-2); height: 1px; }
+.chart { position: relative; width: 100%; }
+.chart canvas { display: block; width: 100%; cursor: crosshair; touch-action: pan-y; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 3; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--axis); border-radius: 4px; padding: 6px 8px; font: 12px/1.4 var(--font-mono);
+  white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+.note { font-size: 12px; color: var(--muted); }
+
+/* Advisory log */
+.logpanel { display: flex; flex-direction: column; }
+.log { display: grid; gap: 8px; align-content: start; flex: 1 1 auto; min-height: 240px; contain: size; overflow: auto; padding-right: 2px; }
+.adv { border: 1px solid var(--line); border-left: 4px solid var(--advisory); border-radius: 4px; padding: 8px 10px; display: grid; gap: 3px; cursor: pointer; background: var(--surface); }
+.adv[data-p="1"] { border-left-color: var(--urgent); }
+.adv[data-p="2"] { border-left-color: var(--critical); }
+.adv .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.adv .ft { font: 500 13px var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.adv .prio { font: 600 11px var(--font-display); letter-spacing: 0.08em; }
+.adv pre { margin: 6px 0 0; font: 11px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+.adv.now { outline: 2px solid var(--accent); outline-offset: -1px; }
+.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+/* Sensor small multiples */
+.sensors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.sensor .val { font: 600 18px var(--font-body); font-variant-numeric: tabular-nums; }
+.sensor .val small { font-size: 12px; font-weight: 500; color: var(--ink-2); }
+.wave { grid-column: span 2; }
+
+footer { color: var(--muted); font-size: 12px; display: grid; gap: 4px; max-width: 75ch; }
+
+@media (max-width: 1060px) {
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .strip .cell:first-child { grid-column: 1 / -1; }
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .log { contain: none; max-height: 380px; }
+  .sensors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .sensors { grid-template-columns: minmax(0, 1fr); }
+  .wave { grid-column: auto; }
+  .chips { margin-left: 0; }
+  .cell .v { font-size: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="titlerow">
+      <h1>AeroMind</h1>
+      <span class="sub">Edge pipeline replay · <span id="component" class="mono"></span></span>
+      <div class="chips">
+        <span class="chip sim">Simulated sensor data</span>
+        <span class="chip" id="backend"></span>
+      </div>
+    </div>
+    <div class="controls">
+      <label for="scenario">Scenario
+        <select id="scenario"></select>
+      </label>
+      <button id="play" class="primary" type="button">Play</button>
+      <label for="speed">Speed
+        <select id="speed">
+          <option value="2">2 windows/s</option>
+          <option value="8" selected>8 windows/s</option>
+          <option value="30">30 windows/s</option>
+        </select>
+      </label>
+      <div class="scrub">
+        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Replay position">
+        <span class="clock num" id="clock"></span>
+      </div>
+    </div>
+  </header>
+
+  <section class="strip" aria-label="Current state">
+    <div class="cell">
+      <span class="k">Crew / MRO status</span>
+      <div class="status">
+        <span class="pill" id="pill"></span>
+        <div style="min-width:0">
+          <div class="fault" id="fault"></div>
+          <div class="d" id="faultd"></div>
+        </div>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="k">Anomaly score</span>
+      <span class="v" id="score"></span>
+      <div class="meter" aria-hidden="true"><i id="gatebar"></i></div>
+      <span class="d" id="gate"></span>
+    </div>
+    <div class="cell">
+      <span class="k">Remaining useful life</span>
+      <span class="v" id="rul"></span>
+      <span class="d" id="ruld"></span>
+    </div>
+    <div class="cell">
+      <span class="k">Downlink so far</span>
+      <span class="v" id="bytes"></span>
+      <span class="d" id="bytesd"></span>
+    </div>
+    <div class="cell">
+      <span class="k">Inference, this window</span>
+      <span class="v" id="lat"></span>
+      <span class="d" id="latd"></span>
+    </div>
+  </section>
+
+  <div class="main">
+    <div class="charts">
+      <section class="panel">
+        <div class="phead">
+          <h2>Anomaly score</h2>
+          <div class="legend">
+            <span class="key"><i></i>Score</span>
+            <span class="key"><i class="thr"></i>Threshold</span>
+            <span class="key"><i class="gate"></i>Persistence gate open</span>
+          </div>
+        </div>
+        <div class="chart" id="c-score"></div>
+        <p class="note" id="score-note"></p>
+      </section>
+      <section class="panel">
+        <div class="phead">
+          <h2>Remaining useful life (flight hours)</h2>
+          <div class="legend">
+            <span class="key"><i class="band"></i>Predicted p50, p10–p90 band</span>
+            <span class="key"><i class="truth"></i>Simulator ground truth</span>
+          </div>
+        </div>
+        <div class="chart" id="c-rul"></div>
+        <p class="note">The pipeline predicts RUL only after the persistence gate opens. Ground truth comes from the simulator and is never shown to the models. Targets are capped at 150 h.</p>
+      </section>
+    </div>
+    <section class="panel logpanel" aria-labelledby="log-h">
+      <div class="phead">
+        <h2 id="log-h">Advisories sent to ground</h2>
+        <span class="legend num" id="logcount"></span>
+      </div>
+      <div class="log" id="log"></div>
+      <p class="note">Select an advisory to see the exact JSON payload and jump to that window.</p>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="phead">
+      <h2>Sensor families</h2>
+      <span class="legend">Per-window features the models see. Gate-open windows shaded.</span>
+    </div>
+    <div class="sensors" id="sensors"></div>
+  </section>
+
+  <footer>
+    <span>All data on this page is synthetic: an in-house simulator with a hidden degradation that reaches 1.0 at failure. Sensor units are nominal.</span>
+    <span>Latency was measured per window on the machine that generated this page (<span id="host"></span>), not on edge hardware. Generated <span id="gen"></span>.</span>
+  </footer>
+</div>
+
+<script id="aeromind-data" type="application/json">/*__AEROMIND_DATA__*/null</script>
+<script>
+(() => {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("aeromind-data").textContent);
+  const M = DATA.meta;
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const fmtBytes = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+  const human = (s) => s.replace(/_/g, " ");
+  const RUL_CAP_H = 150;
+
+  const STATUS = {
+    nominal:  { label: "NOMINAL",  color: "--ok",       icon: '<circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/>' },
+    watch:    { label: "WATCH",    color: "--watch",    icon: '<path d="M1 7h12" stroke="currentColor" stroke-width="2"/>' },
+    advisory: { label: "ADVISORY", color: "--advisory", icon: '<path d="M7 1l6 12H1z" fill="none" stroke="currentColor" stroke-width="1.8"/>' },
+    urgent:   { label: "URGENT",   color: "--urgent",   icon: '<path d="M7 1l6 12H1z" fill="currentColor"/>' },
+    critical: { label: "CRITICAL", color: "--critical", icon: '<rect x="1.5" y="1.5" width="11" height="11" fill="currentColor"/>' },
+  };
+  const PRIO_KEY = ["advisory", "urgent", "critical"];
+
+  let S = null;          // current scenario
+  let idx = 0;           // playhead window
+  let hover = null;      // hovered window, shared by every chart
+  let timer = null;
+  const charts = [];
+
+  // ---------------------------------------------------------------- scenario setup
+  const sel = $("scenario");
+  DATA.scenarios.forEach((s, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = s.mode === "healthy" ? `Healthy run (${s.n} windows)` : `${human(s.mode)} → fails at ${s.life * M.hours_per_window} h`;
+    sel.appendChild(o);
+  });
+  $("component").textContent = M.component;
+  $("backend").textContent = M.backend;
+  $("host").textContent = M.host;
+  $("gen").textContent = M.generated;
+
+  function prep(s) {
+    if (s._prep) return s;
+    s.gateOpen = s.flags.map((f) => f >= M.persist_n);
+    s.cumBytes = new Array(s.n).fill(0);
+    let acc = 0, a = 0;
+    for (let i = 0; i < s.n; i++) {
+      while (a < s.advisories.length && s.advisories[a].i === i) acc += s.advisories[a++].bytes;
+      s.cumBytes[i] = acc;
+    }
+    s.truthCapped = s.truth_rul.map((v) => v == null ? null : Math.min(v, RUL_CAP_H));
+    s._prep = true;
+    return s;
+  }
+
+  function statusAt(i) {
+    if (S.prio[i] >= 0) return PRIO_KEY[S.prio[i]];
+    if (S.flags[i] > 0) return "watch";
+    return "nominal";
+  }
+
+  // ---------------------------------------------------------------- charts
+  // A minimal canvas line chart on a window axis. Each chart declares its own series via draw().
+  function makeChart(host, { height, yMin, yMax, yTicks, draw, tip, compact }) {
+    const wrap = typeof host === "string" ? $(host) : host;
+    const canvas = document.createElement("canvas");
+    const tipEl = document.createElement("div");
+    tipEl.className = "tip"; tipEl.hidden = true;
+    wrap.append(canvas, tipEl);
+    const pad = compact ? { l: 6, r: 6, t: 6, b: 6 } : { l: 44, r: 14, t: 10, b: 26 };
+    const c = { canvas, wrap, height, pad, draw, tip, tipEl, yMin, yMax, yTicks, compact };
+
+    c.layout = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(120, wrap.clientWidth);
+      canvas.width = Math.round(w * dpr); canvas.height = Math.round(height * dpr);
+      canvas.style.height = height + "px";
+      c.w = w; c.dpr = dpr;
+    };
+    c.x = (i) => pad.l + (i / Math.max(1, S.n - 1)) * (c.w - pad.l - pad.r);
+    c.y = (v) => {
+      const lo = typeof c.yMin === "function" ? c.yMin() : c.yMin;
+      const hi = typeof c.yMax === "function" ? c.yMax() : c.yMax;
+      const t = (v - lo) / (hi - lo || 1);
+      return pad.t + (1 - Math.max(-0.02, Math.min(1.02, t))) * (height - pad.t - pad.b);
+    };
+    c.index = (px) => Math.round(((px - pad.l) / (c.w - pad.l - pad.r)) * (S.n - 1));
+
+    c.render = () => {
+      const g = canvas.getContext("2d");
+      g.setTransform(c.dpr, 0, 0, c.dpr, 0, 0);
+      g.clearRect(0, 0, c.w, height);
+      const grid = css("--grid"), muted = css("--muted");
+      // Gate-open shading.
+      g.fillStyle = css("--gate-wash");
+      const step = (c.w - pad.l - pad.r) / Math.max(1, S.n - 1);
+      for (let i = 0; i <= idx; i++) {
+        if (!S.gateOpen[i]) continue;
+        let j = i; while (j + 1 <= idx && S.gateOpen[j + 1]) j++;
+        const x0 = Math.max(pad.l, c.x(i) - step / 2), x1 = Math.min(c.w - pad.r, c.x(j) + step / 2);
+        g.fillRect(x0, pad.t, x1 - x0, height - pad.t - pad.b);
+        i = j;
+      }
+      // Grid + y labels.
+      if (!compact) {
+        g.font = `11px ${css("--font-mono")}`; g.textAlign = "right"; g.textBaseline = "middle";
+        for (const t of (typeof yTicks === "function" ? yTicks() : yTicks)) {
+          const yy = Math.round(c.y(t)) + 0.5;
+          g.strokeStyle = grid; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(pad.l, yy); g.lineTo(c.w - pad.r, yy); g.stroke();
+          g.fillStyle = muted; g.fillText(String(t), pad.l - 6, yy);
+        }
+        // x ticks in flight hours.
+        g.textAlign = "center"; g.textBaseline = "top";
+        const totalH = (S.n - 1) * M.hours_per_window;
+        const plotW = c.w - pad.l - pad.r;
+        const every = [10, 25, 50, 100].find((e) => (e / totalH) * plotW >= 64) || 100;
+        for (let h = 0; h <= totalH; h += every) {
+          const xx = c.x(h / M.hours_per_window);
+          g.fillStyle = muted; g.fillText(h + " h", xx, height - pad.b + 8);
+        }
+        g.strokeStyle = css("--axis"); g.beginPath();
+        g.moveTo(pad.l, height - pad.b + 0.5); g.lineTo(c.w - pad.r, height - pad.b + 0.5); g.stroke();
+      }
+      draw(g, c);
+      // Playhead and hover crosshair.
+      const ph = Math.round(c.x(idx)) + 0.5;
+      g.strokeStyle = css("--ink-2"); g.lineWidth = 1; g.globalAlpha = 0.5;
+      g.beginPath(); g.moveTo(ph, pad.t); g.lineTo(ph, height - pad.b); g.stroke(); g.globalAlpha = 1;
+      if (hover != null && hover <= idx) {
+        const hx = Math.round(c.x(hover)) + 0.5;
+        g.strokeStyle = css("--ink"); g.setLineDash([]); g.lineWidth = 1;
+        g.beginPath(); g.moveTo(hx, pad.t); g.lineTo(hx, height - pad.b); g.stroke();
+      }
+    };
+
+    c.showTip = (i, px, py) => {
+      if (!tip || i == null || i > idx) { tipEl.hidden = true; return; }
+      tipEl.innerHTML = tip(i);
+      tipEl.hidden = false;
+      const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+      let left = px + 14; if (left + tw > c.w) left = px - tw - 14;
+      tipEl.style.left = Math.max(0, left) + "px";
+      tipEl.style.top = Math.max(0, Math.min(height - th, py - th / 2)) + "px";
+    };
+
+    const onMove = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      const px = ev.clientX - r.left, py = ev.clientY - r.top;
+      const i = Math.max(0, Math.min(S.n - 1, c.index(px)));
+      hover = i;
+      renderCharts();
+      c.showTip(i, px, py);
+    };
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerleave", () => { hover = null; tipEl.hidden = true; renderCharts(); });
+    canvas.addEventListener("click", (ev) => {
+      const r = canvas.getBoundingClientRect();
+      seek(Math.max(0, Math.min(S.n - 1, c.index(ev.clientX - r.left))));
+    });
+    charts.push(c);
+    return c;
+  }
+
+  function line(g, c, ys, color, upto, width = 2) {
+    g.strokeStyle = color; g.lineWidth = width; g.lineJoin = "round"; g.lineCap = "round";
+    g.beginPath();
+    let on = false;
+    for (let i = 0; i <= upto; i++) {
+      const v = ys[i];
+      if (v == null) { on = false; continue; }
+      const X = c.x(i), Y = c.y(v);
+      if (on) g.lineTo(X, Y); else { g.moveTo(X, Y); on = true; }
+    }
+    g.stroke();
+  }
+
+  function area(g, c, ys, color, upto, base) {
+    g.fillStyle = color; g.beginPath();
+    let started = false, last = 0;
+    for (let i = 0; i <= upto; i++) {
+      const X = c.x(i), Y = c.y(ys[i]);
+      if (!started) { g.moveTo(X, c.y(base)); started = true; }
+      g.lineTo(X, Y); last = X;
+    }
+    g.lineTo(last, c.y(base)); g.closePath(); g.fill();
+  }
+
+  function dot(g, x, y, color) {
+    g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2);
+    g.fillStyle = color; g.fill();
+    g.lineWidth = 2; g.strokeStyle = css("--surface"); g.stroke();
+  }
+
+  const fh = (i) => (i * M.hours_per_window).toFixed(1);
+
+  // Anomaly score.
+  const scoreMax = () => Math.max(4, Math.ceil(Math.max(...S.score) / 2) * 2);
+  makeChart("c-score", {
+    height: 220, yMin: () => Math.min(-1, Math.floor(Math.min(...S.score))), yMax: scoreMax,
+    yTicks: () => { const hi = scoreMax(), st = hi > 40 ? 20 : hi > 12 ? 4 : 1, out = []; for (let t = 0; t <= hi; t += st) out.push(t); return out; },
+    draw: (g, c) => {
+      const yy = Math.round(c.y(M.threshold)) + 0.5;
+      g.strokeStyle = css("--ink-2"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(c.pad.l, yy); g.lineTo(c.w - c.pad.r, yy); g.stroke();
+      g.font = `11px ${css("--font-mono")}`; g.textAlign = "right"; g.textBaseline = "top";
+      const label = `threshold ${M.threshold.toFixed(1)}`, tw = g.measureText(label).width;
+      g.fillStyle = css("--surface"); g.fillRect(c.w - c.pad.r - tw - 6, yy + 2, tw + 6, 14);
+      g.fillStyle = css("--ink-2"); g.fillText(label, c.w - c.pad.r - 3, yy + 3);
+      line(g, c, S.score, css("--accent"), idx);
+      dot(g, c.x(idx), c.y(S.score[idx]), css("--accent"));
+    },
+    tip: (i) => `${fh(i)} h · window ${i}<br>score ${S.score[i].toFixed(2)}<br>gate ${S.flags[i]}/${M.persist_of} over threshold`,
+  });
+
+  // RUL.
+  makeChart("c-rul", {
+    height: 220, yMin: 0, yMax: RUL_CAP_H, yTicks: [0, 25, 50, 75, 100, 125, 150],
+    draw: (g, c) => {
+      // p10-p90 band, drawn as contiguous segments where a prediction exists.
+      g.fillStyle = css("--accent-wash");
+      let i = 0;
+      while (i <= idx) {
+        if (S.p50[i] == null) { i++; continue; }
+        let j = i; while (j + 1 <= idx && S.p50[j + 1] != null) j++;
+        g.beginPath(); g.moveTo(c.x(i), c.y(S.p90[i]));
+        for (let k = i; k <= j; k++) g.lineTo(c.x(k), c.y(S.p90[k]));
+        for (let k = j; k >= i; k--) g.lineTo(c.x(k), c.y(S.p10[k]));
+        g.closePath(); g.fill();
+        i = j + 1;
+      }
+      if (S.truthCapped[0] != null) line(g, c, S.truthCapped, css("--truth"), idx);
+      line(g, c, S.p50, css("--accent"), idx);
+      if (S.p50[idx] != null) dot(g, c.x(idx), c.y(S.p50[idx]), css("--accent"));
+      if (S.mode === "healthy") {
+        g.fillStyle = css("--muted"); g.font = `12px ${css("--font-body")}`; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText("Healthy run: no failure, so no ground-truth RUL", c.w / 2, 70);
+      }
+    },
+    tip: (i) => {
+      const pred = S.p50[i] == null ? "no prediction (gate closed)" : `p50 ${S.p50[i].toFixed(1)} h (p10 ${S.p10[i].toFixed(1)}, p90 ${S.p90[i].toFixed(1)})`;
+      const truth = S.truth_rul[i] == null ? "" : `<br>truth ${S.truth_rul[i].toFixed(1)} h`;
+      return `${fh(i)} h · window ${i}<br>${pred}${truth}`;
+    },
+  });
+
+  // Sensor families.
+  const SENSORS = [
+    { key: "vib_rms", name: "Vibration", unit: "g RMS", d: 2 },
+    { key: "ac_rms", name: "Acoustic", unit: "RMS", d: 2 },
+    { key: "cur_thd", name: "Electrical", unit: "% THD", d: 1, extra: (i) => `${S.sensors.volt_mean[i].toFixed(1)} V bus` },
+    { key: "temp_mean", name: "Temperature", unit: "°C", d: 1 },
+    { key: "press_mean", name: "Pressure", unit: "psi", d: 1 },
+    { key: "oil_mean", name: "Oil debris", unit: "ppm", d: 1 },
+  ];
+  const sensorsEl = $("sensors");
+  const sensorVals = {};
+  for (const s of SENSORS) {
+    const card = document.createElement("div");
+    card.className = "sensor";
+    card.innerHTML = `<div class="phead"><h2>${s.name}</h2></div><div class="val" id="sv-${s.key}"></div><div class="chart"></div>`;
+    sensorsEl.appendChild(card);
+    sensorVals[s.key] = card.querySelector(".val");
+    const range = () => {
+      const ys = S.sensors[s.key];
+      let lo = Infinity, hi = -Infinity;
+      for (const v of ys) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      const padY = (hi - lo) * 0.1 || 1;
+      return [lo - padY, hi + padY];
+    };
+    makeChart(card.querySelector(".chart"), {
+      height: 64, compact: true, yMin: () => range()[0], yMax: () => range()[1], yTicks: [],
+      draw: (g, c) => {
+        const ys = S.sensors[s.key];
+        area(g, c, ys, css("--accent-wash"), idx, range()[0]);
+        line(g, c, ys, css("--accent"), idx, 1.5);
+        dot(g, c.x(idx), c.y(ys[idx]), css("--accent"));
+      },
+      tip: (i) => `${fh(i)} h<br>${S.sensors[s.key][i].toFixed(s.d)} ${s.unit}`,
+    });
+  }
+  // Raw vibration waveform of the current window.
+  const waveCard = document.createElement("div");
+  waveCard.className = "sensor wave";
+  waveCard.innerHTML = `<div class="phead"><h2>Vibration waveform</h2><span class="legend">first 125 ms of this window, raw samples</span></div><div class="chart" id="c-wave"></div>`;
+  sensorsEl.appendChild(waveCard);
+  const waveCanvas = document.createElement("canvas");
+  $("c-wave").appendChild(waveCanvas);
+  function renderWave() {
+    const host = $("c-wave"), dpr = window.devicePixelRatio || 1, w = Math.max(120, host.clientWidth), h = 92;
+    waveCanvas.width = Math.round(w * dpr); waveCanvas.height = Math.round(h * dpr); waveCanvas.style.width = "100%"; waveCanvas.style.height = h + "px";
+    const g = waveCanvas.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const ws = S.wave[hover != null && hover <= idx ? hover : idx];
+    if (!S._waveMax) S._waveMax = Math.max(...S.wave.flat().map(Math.abs)) / 100 || 1;
+    const amp = S._waveMax;
+    g.strokeStyle = css("--grid"); g.lineWidth = 1; g.beginPath(); g.moveTo(0, h / 2 + 0.5); g.lineTo(w, h / 2 + 0.5); g.stroke();
+    g.strokeStyle = css("--accent"); g.lineWidth = 1.5; g.lineJoin = "round"; g.beginPath();
+    ws.forEach((v, k) => { const X = (k / (ws.length - 1)) * w, Y = h / 2 - (v / 100 / amp) * (h / 2 - 4); k ? g.lineTo(X, Y) : g.moveTo(X, Y); });
+    g.stroke();
+  }
+
+  // ---------------------------------------------------------------- advisory log
+  function renderLog() {
+    const log = $("log");
+    log.textContent = "";
+    const shown = S.advisories.filter((a) => a.i <= idx);
+    $("logcount").textContent = `${shown.length} of ${S.advisories.length} · ${fmtBytes(shown.reduce((t, a) => t + a.bytes, 0))}`;
+    if (!shown.length) {
+      const p = document.createElement("p"); p.className = "empty";
+      p.textContent = S.advisories.length ? "Nothing sent yet. The first advisory goes out once the persistence gate opens." : "No advisories in this run. Nothing was sent to ground.";
+      log.appendChild(p); return;
+    }
+    for (const a of shown.slice().reverse()) {
+      const j = a.json, p = M.priorities.indexOf(j.priority);
+      const el = document.createElement("div");
+      el.className = "adv" + (a.i === idx ? " now" : "");
+      el.dataset.p = String(p); el.tabIndex = 0; el.setAttribute("role", "button");
+      el.setAttribute("aria-expanded", "false");
+      el.innerHTML =
+        `<div class="row"><span class="prio">${j.priority}</span><span class="num">${j.flight_hours.toFixed(1)} h · ${a.bytes} B</span></div>` +
+        `<div class="ft">${human(j.fault_type)} <span class="sub">${Math.round(j.confidence * 100)}%</span></div>` +
+        `<div class="row"><span>RUL ${j.rul_hours_p50} h (${j.rul_hours_p10}–${j.rul_hours_p90})</span></div>` +
+        `<div class="row"><span>${j.recommended_action}</span></div>`;
+      const toggle = () => {
+        const pre = el.querySelector("pre");
+        if (pre) { pre.remove(); el.setAttribute("aria-expanded", "false"); return; }
+        const x = document.createElement("pre"); x.textContent = JSON.stringify(j, null, 1);
+        el.appendChild(x); el.setAttribute("aria-expanded", "true");
+        seek(a.i, true);
+      };
+      el.addEventListener("click", toggle);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      log.appendChild(el);
+    }
+  }
+
+  // ---------------------------------------------------------------- status strip
+  function renderStrip() {
+    const st = STATUS[statusAt(idx)];
+    const pill = $("pill");
+    pill.style.background = css(st.color);
+    pill.innerHTML = `<svg viewBox="0 0 14 14" aria-hidden="true">${st.icon}</svg>${st.label}`;
+    const f = S.fault[idx];
+    if (f >= 0) {
+      $("fault").textContent = human(M.faults[f]);
+      $("faultd").textContent = `classifier confidence ${Math.round(S.conf[idx] * 100)}%`;
+    } else if (S.flags[idx] > 0) {
+      $("fault").textContent = "anomaly building";
+      $("faultd").textContent = `waiting for ${M.persist_n} of ${M.persist_of} windows over threshold`;
+    } else {
+      $("fault").textContent = "no anomaly";
+      $("faultd").textContent = `load ${(S.load[idx] * 100).toFixed(0)}%`;
+    }
+    $("score").textContent = S.score[idx].toFixed(2);
+    $("gate").textContent = `${S.flags[idx]} of last ${M.persist_of} windows over ${M.threshold.toFixed(1)}; gate opens at ${M.persist_n}`;
+    $("gatebar").style.width = `${(100 * S.flags[idx]) / M.persist_of}%`;
+    $("gatebar").style.background = S.gateOpen[idx] ? css("--advisory") : css("--accent");
+    if (S.p50[idx] != null) {
+      $("rul").innerHTML = `${S.p50[idx].toFixed(0)} <small>h p50</small>`;
+      $("ruld").textContent = `p10 ${S.p10[idx].toFixed(0)} h · p90 ${S.p90[idx].toFixed(0)} h` + (S.truth_rul[idx] != null ? ` · truth ${S.truth_rul[idx].toFixed(0)} h` : "");
+    } else {
+      $("rul").innerHTML = `– <small>no prediction</small>`;
+      $("ruld").textContent = "Predicted only while the gate is open";
+    }
+    const sent = S.cumBytes[idx], raw = (idx + 1) * M.raw_bytes_per_window;
+    $("bytes").textContent = fmtBytes(sent);
+    $("bytesd").textContent = `vs ${fmtBytes(raw)} raw` + (sent ? ` · ${Math.round(raw / sent).toLocaleString()}× less` : "");
+    $("lat").innerHTML = `${S.latency[idx].toFixed(1)} <small>ms</small>`;
+    $("latd").textContent = `run mean ${S.summary.latency_ms_mean.toFixed(1)} ms · max ${S.summary.latency_ms_max.toFixed(1)} ms`;
+    for (const s of SENSORS) {
+      const v = S.sensors[s.key][idx];
+      sensorVals[s.key].innerHTML = `${v.toFixed(s.d)} <small>${s.unit}${s.extra ? " · " + s.extra(idx) : ""}</small>`;
+    }
+    $("scrub").value = String(idx);
+    $("clock").textContent = `${fh(idx)} h · window ${idx + 1}/${S.n}`;
+    const sm = S.summary;
+    $("score-note").textContent = sm.first_alert_window == null
+      ? (S.mode === "healthy" ? "Healthy run: no advisory raised." : "No advisory before failure.")
+      : `First advisory at ${fh(sm.first_alert_window)} h (degradation ${(sm.first_alert_degradation * 100).toFixed(0)}%), ${((S.life - sm.first_alert_window) * M.hours_per_window).toFixed(0)} h before failure.`;
+  }
+
+  // ---------------------------------------------------------------- playback
+  function renderCharts() { charts.forEach((c) => c.render()); renderWave(); }
+  function renderAll() { renderStrip(); renderCharts(); renderLog(); }
+  function layoutAll() { charts.forEach((c) => c.layout()); renderAll(); }
+
+  function seek(i, keepPlaying) {
+    idx = Math.max(0, Math.min(S.n - 1, i));
+    if (!keepPlaying) stop();
+    renderAll();
+  }
+  function stop() { clearInterval(timer); timer = null; $("play").textContent = "Play"; }
+  function play() {
+    if (idx >= S.n - 1) idx = 0;
+    $("play").textContent = "Pause";
+    const rate = Number($("speed").value);
+    timer = setInterval(() => {
+      if (idx >= S.n - 1) { stop(); return; }
+      idx++; renderAll();
+    }, 1000 / rate);
+  }
+  $("play").addEventListener("click", () => (timer ? stop() : play()));
+  $("speed").addEventListener("change", () => { if (timer) { stop(); play(); } });
+  $("scrub").addEventListener("input", (e) => seek(Number(e.target.value)));
+  sel.addEventListener("change", () => load(Number(sel.value)));
+
+  function load(k) {
+    stop();
+    S = prep(DATA.scenarios[k]);
+    $("scrub").max = String(S.n - 1);
+    idx = S.n - 1; // open on the finished run so the page is complete at rest
+    hover = null;
+    try { localStorage.setItem("aeromind-scenario", String(k)); } catch (e) { /* storage unavailable */ }
+    layoutAll();
+  }
+
+  let start = 0;
+  try { const v = Number(localStorage.getItem("aeromind-scenario")); if (v >= 0 && v < DATA.scenarios.length) start = v; } catch (e) { /* storage unavailable */ }
+  sel.value = String(start);
+  load(start);
+  let rt;
+  window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(layoutAll, 120); });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
+  new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
+</body>
+</html>

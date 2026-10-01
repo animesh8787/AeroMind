@@ -24,6 +24,16 @@ class PipelineConfig:
     reemit_windows: int = 20  # re-send an unchanged advisory at most this often
 
 
+@dataclass(frozen=True)
+class Assessment:
+    """What the models concluded for a window that passed the persistence gate."""
+
+    fault: str
+    confidence: float
+    rul_hours: tuple[float, float, float]  # p10, p50, p90
+    priority: str
+
+
 @dataclass
 class PipelineStats:
     windows: int = 0
@@ -56,7 +66,12 @@ class EdgePipeline:
         self._flags: deque[bool] = deque(maxlen=self.cfg.persist_of)
         self._last: tuple[int, str, str] | None = None  # (window, fault, priority) of last emission
         self.stats = PipelineStats()
+        # Per-window introspection for dashboards; never part of the downlink.
+        self.last_features = None  # feature vector of the latest window
         self.last_score = 0.0
+        self.last_flags = 0  # windows over threshold among the last persist_of
+        self.last_assessment: Assessment | None = None
+        self.last_latency_ms = 0.0
 
     def _priority(self, rul_p10: float) -> str:
         if rul_p10 <= self.cfg.critical_hours:
@@ -69,6 +84,7 @@ class EdgePipeline:
         start = time.perf_counter()
         adv = self._process(w)
         ms = (time.perf_counter() - start) * 1000
+        self.last_latency_ms = ms
         s = self.stats
         s.windows += 1
         s.latency_ms_total += ms
@@ -80,13 +96,15 @@ class EdgePipeline:
 
     def _process(self, w: SensorWindow) -> Advisory | None:
         b, cfg = self.bundle, self.cfg
-        x = extract_features(w)
+        x = self.last_features = extract_features(w)
         score = float(b.anomaly.score(x)[0])
         self.last_score = score
+        self.last_assessment = None
         trend = self._trend.update(x, score)
         self._flags.append(score > cfg.anomaly_threshold)
+        self.last_flags = sum(self._flags)
 
-        if sum(self._flags) < cfg.persist_n:
+        if self.last_flags < cfg.persist_n:
             if not any(self._flags):
                 self._last = None  # anomaly cleared: next alarm is reported afresh
             return None
@@ -98,6 +116,7 @@ class EdgePipeline:
             fault = "unclassified_anomaly"
         p10, p50, p90 = b.rul.predict(trend)
         priority = self._priority(p10)
+        self.last_assessment = Assessment(fault, conf, (p10, p50, p90), priority)
 
         if self._last is not None:
             last_w, last_fault, last_prio = self._last

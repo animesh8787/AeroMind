@@ -1,4 +1,4 @@
-"""Command line: train, demo, evaluate, federated."""
+"""Command line: train, export-onnx, demo, evaluate, dashboard, federated, cmapss."""
 
 from __future__ import annotations
 
@@ -17,6 +17,22 @@ from .simulator import simulate_run
 from .train import ModelBundle, TrainConfig, train
 
 DEFAULT_MODEL = "artifacts/bundle.joblib"
+DEFAULT_ONNX = "artifacts/onnx"
+
+
+def _load_backend(a):
+    """The models the pipeline runs on: the joblib bundle, or its ONNX export."""
+    if a.backend == "onnx":
+        from .onnx_export import OnnxBundle
+
+        return OnnxBundle(a.onnx_dir)
+    return ModelBundle.load(a.model)
+
+
+def _add_backend_args(p) -> None:
+    p.add_argument("--model", default=DEFAULT_MODEL, help="joblib bundle (sklearn backend)")
+    p.add_argument("--backend", choices=("sklearn", "onnx"), default="sklearn")
+    p.add_argument("--onnx-dir", default=DEFAULT_ONNX, help="exported ONNX bundle (onnx backend)")
 
 
 def _cmd_train(a) -> None:
@@ -26,8 +42,25 @@ def _cmd_train(a) -> None:
     print(f"trained in {time.time() - t0:.0f}s -> {a.model}")
 
 
+def _cmd_export_onnx(a) -> None:
+    from .features import trend_matrix
+    from .onnx_export import OnnxBundle, check_parity, export_onnx
+    from .train import collect_run
+
+    bundle = ModelBundle.load(a.model)
+    manifest = export_onnx(bundle, a.out)
+    for key, info in manifest["files"].items():
+        print(f"{info['file']:<16} {info['bytes'] / 1024:7.0f} KB  sha256 {info['sha256'][:12]}")
+    # Parity on fresh simulated windows from every mode (seeds disjoint from training and evaluation).
+    runs = [collect_run(m, 300, 8_000_000 + i) for i, m in enumerate((HEALTHY, *FAULT_MODES))]
+    X = np.vstack([r.X for r in runs])
+    T = np.vstack([trend_matrix(r.X, bundle.anomaly.score(r.X)) for r in runs])
+    print(json.dumps(check_parity(bundle, OnnxBundle(a.out), X, T), indent=2))
+    print(f"-> {a.out}")
+
+
 def _cmd_demo(a) -> None:
-    pipe = EdgePipeline(ModelBundle.load(a.model))
+    pipe = EdgePipeline(_load_backend(a))
     first = None
     for w, truth in simulate_run(a.mode, a.life, a.seed):
         adv = pipe.process(w)
@@ -51,7 +84,15 @@ def _cmd_demo(a) -> None:
 
 
 def _cmd_evaluate(a) -> None:
-    print(json.dumps(evaluate(ModelBundle.load(a.model), a.runs_per_mode, a.healthy_runs, a.seed), indent=2))
+    print(json.dumps(evaluate(_load_backend(a), a.runs_per_mode, a.healthy_runs, a.seed), indent=2))
+
+
+def _cmd_dashboard(a) -> None:
+    from .dashboard import backend_label, build_dashboard
+
+    t0 = time.time()
+    out = build_dashboard(_load_backend(a), a.out, backend_label(a.backend))
+    print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB) in {time.time() - t0:.0f}s; open it in a browser")
 
 
 def _cmd_federated(a) -> None:
@@ -89,8 +130,13 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--seed", type=int, default=0)
     t.set_defaults(fn=_cmd_train)
 
+    x = sub.add_parser("export-onnx", help="export the trained bundle to ONNX and check parity")
+    x.add_argument("--model", default=DEFAULT_MODEL)
+    x.add_argument("--out", default=DEFAULT_ONNX)
+    x.set_defaults(fn=_cmd_export_onnx)
+
     d = sub.add_parser("demo", help="stream one simulated run through the edge pipeline")
-    d.add_argument("--model", default=DEFAULT_MODEL)
+    _add_backend_args(d)
     d.add_argument("--mode", choices=(HEALTHY, *FAULT_MODES), default="bearing_wear")
     d.add_argument("--life", type=int, default=350, help="windows until failure (or run length if healthy)")
     d.add_argument("--seed", type=int, default=7)
@@ -98,11 +144,16 @@ def main(argv: list[str] | None = None) -> None:
     d.set_defaults(fn=_cmd_demo)
 
     e = sub.add_parser("evaluate", help="closed-loop metrics on fresh simulated runs")
-    e.add_argument("--model", default=DEFAULT_MODEL)
+    _add_backend_args(e)
     e.add_argument("--runs-per-mode", type=int, default=6)
     e.add_argument("--healthy-runs", type=int, default=6)
     e.add_argument("--seed", type=int, default=0)
     e.set_defaults(fn=_cmd_evaluate)
+
+    h = sub.add_parser("dashboard", help="write a self-contained HTML replay of simulated runs")
+    _add_backend_args(h)
+    h.add_argument("--out", default="artifacts/dashboard.html")
+    h.set_defaults(fn=_cmd_dashboard, backend="onnx")
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)
