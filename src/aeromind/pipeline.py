@@ -11,6 +11,7 @@ import numpy as np
 from .alerts import ACTIONS, PRIORITY_RANK, Advisory
 from .config import HEALTHY, HOURS_PER_WINDOW, RAW_BYTES_PER_WINDOW
 from .features import SequenceTracker, TrendTracker, extract_features
+from .sensor_health import SensorAdvisory, SensorHealthMonitor
 from .simulator import SensorWindow
 from .train import ModelBundle
 
@@ -24,6 +25,7 @@ class PipelineConfig:
     critical_hours: float = 20.0  # priority is based on the conservative (p10) RUL
     urgent_hours: float = 60.0
     reemit_windows: int = 20  # re-send an unchanged advisory at most this often
+    sensor_health: bool = True  # validate and mask sensor channels before the models see them
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class PipelineStats:
     windows: int = 0
     advisories: int = 0
     advisory_bytes: int = 0
+    sensor_advisories: int = 0
     latency_ms_total: float = 0.0
     latency_ms_max: float = 0.0
 
@@ -80,6 +83,9 @@ class EdgePipeline:
         self.last_flags = 0  # windows over threshold among the last persist_of
         self.last_assessment: Assessment | None = None
         self.last_latency_ms = 0.0
+        self.health = SensorHealthMonitor(self.component) if self.cfg.sensor_health else None
+        self.sensor_advisories: list[SensorAdvisory] = []
+        self.last_sensor_advisories: list[SensorAdvisory] = []
 
     def _priority(self, rul_p10: float) -> str:
         if rul_p10 <= self.cfg.critical_hours:
@@ -100,10 +106,17 @@ class EdgePipeline:
         if adv is not None:
             s.advisories += 1
             s.advisory_bytes += adv.size_bytes
+        for sa in self.last_sensor_advisories:
+            s.sensor_advisories += 1
+            s.advisory_bytes += sa.size_bytes
         return adv
 
     def _process(self, w: SensorWindow) -> Advisory | None:
         b, cfg = self.bundle, self.cfg
+        self.last_sensor_advisories = []
+        if self.health is not None:
+            w, self.last_sensor_advisories = self.health.process(w)
+            self.sensor_advisories.extend(self.last_sensor_advisories)
         x = self.last_features = extract_features(w)
         score = float(b.anomaly.score(x)[0])
         self.last_score = score
