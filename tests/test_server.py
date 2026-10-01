@@ -82,3 +82,19 @@ def _app_for(gs):
         return app_module.create_app()
     finally:
         app_module.GroundStation = original
+
+
+def test_roi_and_whatif_endpoints(gs):
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_app_for(gs))
+    assert client.get("/api/roi").json()["status"] in ("disabled", "computing", "ready")
+    gs.fleet.reset("VT-AMA06")
+    assert client.post("/api/aircraft/VT-AMA06/whatif", json={"hours_to_next_check": 5}).status_code == 409
+    gs.fleet.inject_component("VT-AMA06", "pressure_leak", life=150)
+    for _ in range(140):
+        gs.fleet.tick()
+    near = client.post("/api/aircraft/VT-AMA06/whatif", json={"hours_to_next_check": 1}).json()
+    far = client.post("/api/aircraft/VT-AMA06/whatif", json={"hours_to_next_check": 200}).json()
+    assert near["p_fail_before_check"] <= far["p_fail_before_check"]

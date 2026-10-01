@@ -103,3 +103,11 @@ def test_ota_valid_then_tampered(page):
     page.click('[data-testid="ota-tampered"]')
     _wait(lambda: "REJECTED" in text(page, "events"))
     assert "v2" in text(page, "model-version")  # previous valid model stays active
+
+
+def test_roi_panel_and_whatif(page):
+    page.click('[data-testid="aircraft-VT-AMA03"]')  # has a bearing advisory from the first test
+    page.fill('[data-testid="whatif"]', "100")
+    page.dispatch_event('[data-testid="whatif"]', "input")
+    _wait(lambda: "risk before check" in text(page, "whatif-result"))
+    _wait(lambda: "AeroMind" in text(page, "roi"), timeout=240)

@@ -137,7 +137,7 @@ def _cmd_bench(a) -> None:
 def _cmd_report(a) -> None:
     from .report import generate
 
-    generate(a.out, a.cmapss_dir, a.ims_dir, a.cmapss_seeds, log=lambda m: print(m, flush=True))
+    generate(a.out, a.cmapss_dir, a.ims_dir, a.cmapss_seeds, lstm=a.lstm, log=lambda m: print(m, flush=True))
 
 
 def _cmd_federated(a) -> None:
@@ -246,6 +246,7 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--cmapss-dir", default="data/cmapss")
     q.add_argument("--ims-dir", default="data/ims")
     q.add_argument("--cmapss-seeds", type=int, default=3)
+    q.add_argument("--lstm", action="store_true", help="also train/evaluate the PyTorch LSTM (needs .[lstm]; ~25 min)")
     q.set_defaults(fn=_cmd_report)
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")

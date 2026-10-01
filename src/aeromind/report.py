@@ -99,7 +99,7 @@ def _summary_eval(r: dict) -> dict:
 
 
 def generate(out_dir: str | Path = "artifacts/report", cmapss_dir: str | Path = "data/cmapss",
-             ims_dir: str | Path = "data/ims", cmapss_seeds: int = 3, log=print) -> dict:
+             ims_dir: str | Path = "data/ims", cmapss_seeds: int = 3, lstm: bool = False, log=print) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -164,6 +164,29 @@ def generate(out_dir: str | Path = "artifacts/report", cmapss_dir: str | Path = 
         res["cmapss_hgb_conformal"] = cm
     else:
         res["cmapss_hgb_conformal"] = {"unavailable": "run python -m aeromind cmapss once to download"}
+
+    log("federated rare-fault sharing...")
+    from .federated import rare_fault_demo
+
+    fed = [rare_fault_demo(seed=s) for s in range(3)]
+    res["federated_rare_fault"] = {
+        k: {m: round(float(np.mean([f[k][m] for f in fed])), 3) for m in fed[0][k]}
+        for k in ("local", "federated", "centralised_upper_bound")} | {"seeds": 3}
+
+    if lstm:
+        log("LSTM RUL (simulator and C-MAPSS; slow)...")
+        res["lstm"] = {}
+        b = train(TrainConfig(phases=True, conformal=True, rul_model="lstm"))
+        export_onnx(b, out / "models/fleet-lstm")
+        res["lstm"]["simulator_flight_phases"] = _summary_eval(evaluate(OnnxBundle(out / "models/fleet-lstm"), phases=True))
+        if (Path(cmapss_dir) / "train_FD001.txt").exists():
+            cm = {}
+            for sub in cmapss.SUBSETS:
+                runs = [cmapss.run_subset(cmapss_dir, sub, seed=s, rul="lstm", conformal=True) for s in range(cmapss_seeds)]
+                a = [r["aeromind"] for r in runs]
+                cm[sub] = {k: round(float(np.mean([x[k] for x in a])), 3) for k in a[0]}
+                cm[sub]["rmse_std"] = round(float(np.std([x["rmse"] for x in a])), 2)
+            res["lstm"]["cmapss_conformal"] = cm
 
     res["runtime_s"] = round(time.time() - t0)
     (out / "results.json").write_text(json.dumps(res, indent=2, default=float))
@@ -242,4 +265,21 @@ def to_markdown(r: dict) -> str:
         md.append(_table(["Subset", "RMSE", "MAE", "NASA score", "p10-p90 coverage", "Constant baseline RMSE"],
                          [[k, v["rmse"], v["mae"], round(v["nasa_score"]), v["p10_p90_coverage"], v["constant_baseline_rmse"]]
                           for k, v in cm.items()]))
+    fr = r.get("federated_rare_fault")
+    if fr:
+        md.append(f"\n## Federated learning: rare-fault sharing (simulator, {fr['seeds']} seeds)\n")
+        md.append(_table(["Model", "Fault types seen locally", "Fault types never seen locally", "Healthy called faulty"],
+                         [[k, v["seen_fault_accuracy"], v["unseen_fault_accuracy"], v["healthy_called_faulty"]]
+                          for k, v in fr.items() if isinstance(v, dict)]))
+    ls = r.get("lstm")
+    if ls:
+        s2 = ls["simulator_flight_phases"]
+        md.append("\n## LSTM RUL (PyTorch, conformal interval)\n")
+        md.append("Simulator, flight phases: RUL MAE " + str(s2["rul_mae_h"]) + " h; coverage " + str(s2["rul_p10_p90_coverage"]) + ".\n")
+        if "cmapss_conformal" in ls:
+            md.append(_table(["Subset", "RMSE", "RMSE std", "MAE", "NASA score", "p10-p90 coverage"],
+                             [[k, v["rmse"], v["rmse_std"], v["mae"], round(v["nasa_score"]), v["p10_p90_coverage"]]
+                              for k, v in ls["cmapss_conformal"].items()]))
+    md.append("\n## Not run\n\nCWRU bearing data: host blocked by this environment's network policy (HTTP 403). "
+              "N-CMAPSS: 15.8 GB archive, not downloaded. Ground-side LLM maintenance copilot: needs an API key.\n")
     return "\n".join(md) + "\n"

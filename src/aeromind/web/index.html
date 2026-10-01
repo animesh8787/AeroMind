@@ -154,7 +154,12 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
     <div class="row2">
       <section class="panel"><h2>Evidence</h2><ul class="evidence" id="evidence" data-testid="evidence"><li class="note">No advisory yet.</li></ul>
         <p class="note" id="signals"></p></section>
-      <section class="panel"><h2>Maintenance decision</h2><div class="dec" id="decision" data-testid="decision"><span class="note">No decision needed.</span></div></section>
+      <section class="panel"><h2>Maintenance decision</h2><div class="dec" id="decision" data-testid="decision"><span class="note">No decision needed.</span></div>
+        <div class="whatif" style="margin-top:8px;display:grid;gap:4px">
+          <label class="note" for="wi">What if the next check were in <b id="wi-v">10</b> FH?</label>
+          <input id="wi" type="range" min="1" max="120" value="10" data-testid="whatif">
+          <div class="note" id="wi-out" data-testid="whatif-result"></div>
+        </div></section>
     </div>
     <section class="panel"><h2>Latest work order</h2><div id="wo" data-testid="work-order"><span class="note">None.</span></div></section>
   </main>
@@ -178,6 +183,10 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
         <button id="ota-rollback" type="button">Roll back</button>
       </div>
       <div class="note">Packages are signed with Ed25519; every model file is pinned by SHA-256 in the signed manifest.</div>
+    </section>
+    <section class="panel" aria-label="Fleet ROI">
+      <h2>Fleet ROI (30 aircraft × 3,000 FH, simulation)</h2>
+      <div id="roi" data-testid="roi"><span class="note">Computing from a measured evaluation of the active model…</span></div>
     </section>
     <section class="panel"><h2>Downlink and events</h2><div class="log" id="log" data-testid="events"></div></section>
   </aside>
@@ -220,7 +229,7 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
     try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
     catch (e) { console.warn(e); }
   }
-  function select(tail) { selected = tail; $("ctl-tail").textContent = tail; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ select: tail })); }
+  function select(tail) { selected = tail; if ($("wi-out")) $("wi-out").textContent = ""; $("ctl-tail").textContent = tail; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ select: tail })); }
 
   // ---------------------------------------------------------------- charts
   function setup(c) {
@@ -380,6 +389,33 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
       log.appendChild(el);
     }
   }
+  // ---------------------------------------------------------------- what-if + ROI
+  let wiTimer = null;
+  $("wi").oninput = (e) => { $("wi-v").textContent = e.target.value; clearTimeout(wiTimer); wiTimer = setTimeout(whatif, 150); };
+  async function whatif() {
+    if (!selected) return;
+    try {
+      const r = await fetch(`/api/aircraft/${selected}/whatif`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours_to_next_check: Number($("wi").value) }) });
+      if (r.status === 409) { $("wi-out").textContent = "No component advisory on this aircraft yet."; return; }
+      const d = await r.json();
+      $("wi-out").textContent = `${human(d.action)} · risk before check ${(d.p_fail_before_check * 100).toFixed(1)}% · expected cost if deferred $${d.expected_cost_if_deferred.toLocaleString()}`;
+    } catch (e) { console.warn(e); }
+  }
+  async function loadRoi() {
+    try {
+      const r = await (await fetch("/api/roi")).json();
+      if (r.status !== "ready") { if (r.status === "computing") setTimeout(loadRoi, 3000);
+        else $("roi").innerHTML = `<span class="note">ROI ${esc(r.status)}${r.error ? ": " + esc(r.error) : ""}</span>`; return; }
+      const p = r.policies, row = (k, label) => `<tr><td>${label}</td><td class="num">${p[k].unscheduled_removals}</td><td class="num">${p[k].aog_hours}</td><td class="num">${p[k].cost_vs_reactive_pct}%</td></tr>`;
+      $("roi").innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse"><tr class="note"><td>Policy</td><td>Unsched.</td><td>AOG h</td><td>Cost</td></tr>
+        ${row("reactive", "Reactive")}${row("fixed_interval", "Fixed interval")}${row("aeromind", "AeroMind")}</table>
+        <div class="note" style="margin-top:6px">Range under harsher assumptions: ${r.sensitivity.map((x) => x.aeromind_cost_vs_reactive_pct + "%").join(", ")} vs reactive.
+        Detection and warning times measured on this model; costs and failure rates are labelled assumptions.</div>`;
+    } catch (e) { setTimeout(loadRoi, 3000); }
+  }
+  loadRoi();
+
   function render(msg) {
     last = msg; if (!selected) select(msg.aircraft[0].tail);
     $("model").textContent = "model " + msg.model_version; $("pause").textContent = msg.paused ? "Resume" : "Pause";

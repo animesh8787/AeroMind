@@ -9,7 +9,9 @@ import asyncio
 import contextlib
 import json
 import shutil
+from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
+from multiprocessing import get_context
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -44,9 +46,21 @@ def _keys(workdir: Path) -> tuple[bytes, bytes]:
     return priv_f.read_bytes(), pub_f.read_bytes()
 
 
+def compute_roi_job(model_dir: str) -> dict:
+    """Fleet ROI from a quick measured evaluation of the model in ``model_dir`` (runs in a worker process)."""
+    from ..evaluate import evaluate
+    from ..onnx_export import OnnxBundle
+    from ..roi import Assumptions, sensitivity, simulate
+
+    ev = evaluate(OnnxBundle(model_dir), runs_per_mode=3, healthy_runs=3, phases=True)
+    r = simulate(ev, Assumptions())
+    return {"status": "ready", "policies": r["policies"], "sensitivity": sensitivity(ev),
+            "assumptions": r["assumptions"], "evaluation_runs_per_mode": 3}
+
+
 class GroundStation:
     def __init__(self, model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = "artifacts/ground",
-                 speed: float = 4.0, seed: int = 4242):
+                 speed: float = 4.0, seed: int = 4242, compute_roi: bool = False):
         self.workdir = Path(workdir)
         self.private_key, self.public_key = _keys(self.workdir)
         self.packages = self.workdir / "packages"
@@ -57,6 +71,20 @@ class GroundStation:
         self.slots.install(v1)
         self.fleet = Fleet(self.slots.active.bundle, speed=speed, seed=seed, model_version="v1")
         self.selected: dict[WebSocket, str] = {}
+        self.roi: dict = {"status": "disabled"}
+        if compute_roi:
+            # A separate process, so the CPU-heavy evaluation never stalls the live demo (GIL).
+            self.roi = {"status": "computing"}
+            self._pool = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
+            fut = self._pool.submit(compute_roi_job, str(self.slots.active.path))
+            fut.add_done_callback(self._roi_done)
+
+    def _roi_done(self, fut):
+        try:
+            self.roi = fut.result()
+        except Exception as e:  # never take the demo down
+            self.roi = {"status": "failed", "error": str(e)}
+        self._pool.shutdown(wait=False)
 
     def _build_package(self, version: str, tamper: bool = False) -> Path:
         """Copy the base export, sign it as ``version``; optionally corrupt a model file after signing."""
@@ -117,8 +145,8 @@ class GroundStation:
 
 
 def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = "artifacts/ground",
-               speed: float = 4.0, seed: int = 4242) -> FastAPI:
-    gs = GroundStation(model_dir, workdir, speed, seed)
+               speed: float = 4.0, seed: int = 4242, compute_roi: bool = True) -> FastAPI:
+    gs = GroundStation(model_dir, workdir, speed, seed, compute_roi=compute_roi)
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -193,6 +221,22 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
         if "paused" in body:
             gs.fleet.paused = bool(body["paused"])
         return {"speed": gs.fleet.speed, "paused": gs.fleet.paused}
+
+    @app.get("/api/roi")
+    def roi():
+        return gs.roi
+
+    @app.post("/api/aircraft/{tail}/whatif")
+    def whatif(tail: str, body: dict = Body(...)):
+        """The decision for the latest advisory if the next check were ``hours_to_next_check`` away."""
+        from ..decision import Schedule, decide
+
+        a = ac(tail)
+        if a.last_advisory is None:
+            raise HTTPException(409, "no component advisory on this aircraft yet")
+        s = Schedule(hours_to_next_check=float(body.get("hours_to_next_check", 10)),
+                     leg_hours=float(body.get("leg_hours", 2)), check_station=a.station)
+        return decide(a.last_advisory, s).to_dict()
 
     @app.post("/api/ota")
     def ota(body: dict = Body(...)):
