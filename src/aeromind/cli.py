@@ -48,7 +48,9 @@ def _cmd_export_onnx(a) -> None:
     from .train import collect_run
 
     bundle = ModelBundle.load(a.model)
-    manifest = export_onnx(bundle, a.out)
+    a.out = a.out or (DEFAULT_ONNX if a.trees == "onnx-ml" else f"{DEFAULT_ONNX}-trt")
+    manifest = export_onnx(bundle, a.out, trees=a.trees, strategy=a.strategy)
+    print(f"trees: {manifest['trees']}")
     for key, info in manifest["files"].items():
         print(f"{info['file']:<16} {info['bytes'] / 1024:7.0f} KB  sha256 {info['sha256'][:12]}")
     # Parity on fresh simulated windows from every mode (seeds disjoint from training and evaluation).
@@ -132,7 +134,10 @@ def main(argv: list[str] | None = None) -> None:
 
     x = sub.add_parser("export-onnx", help="export the trained bundle to ONNX and check parity")
     x.add_argument("--model", default=DEFAULT_MODEL)
-    x.add_argument("--out", default=DEFAULT_ONNX)
+    x.add_argument("--out", default=None, help=f"default {DEFAULT_ONNX} (onnx-ml) or {DEFAULT_ONNX}-trt (hummingbird)")
+    x.add_argument("--trees", choices=("onnx-ml", "hummingbird"), default="onnx-ml",
+                   help="onnx-ml: compact, ONNX Runtime only; hummingbird: tensor ops for TensorRT")
+    x.add_argument("--strategy", choices=("gemm", "tree_trav"), default="gemm", help="Hummingbird tree implementation")
     x.set_defaults(fn=_cmd_export_onnx)
 
     d = sub.add_parser("demo", help="stream one simulated run through the edge pipeline")

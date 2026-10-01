@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 onnx = ["onnx>=1.15", "onnxruntime>=1.17"]
+# Tensor-op tree export for TensorRT (export machine only). hummingbird-ml 0.4.12 pins onnx<=1.16.1.
+hummingbird = ["onnx>=1.15", "onnxruntime>=1.17", "torch>=2.5", "hummingbird-ml>=0.4.12"]
 dev = ["pytest>=8", "onnx>=1.15", "onnxruntime>=1.17"]
 
 [project.scripts]

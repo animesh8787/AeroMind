@@ -25,7 +25,8 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 | Federated fleet learning | `federated.py` | FedAvg *mechanism* only; see results |
 | LSTM / transformer-lite, PyTorch/TF | | Not implemented (scikit-learn only) |
 | ONNX optimized inference | `onnx_export.py` | Implemented: ONNX export + ONNX Runtime backend (CPU); see below |
-| TensorRT, Jetson, FPGA DSP, OTA updates | | Not implemented |
+| TensorRT | `onnx_export.py` | TensorRT-compatible ONNX export (Hummingbird); **not yet built or run with TensorRT** |
+| Jetson, FPGA DSP, OTA updates | | Not implemented |
 | ACARS / SWIM, MRO connectors | | Not implemented (advisories are plain JSON) |
 
 ## Quick start
@@ -37,6 +38,7 @@ python -m aeromind demo --mode bearing_wear      # stream one run-to-failure thr
 python -m aeromind demo --mode healthy --life 300
 python -m aeromind evaluate                      # closed-loop metrics (~3 min)
 python -m aeromind export-onnx                   # writes artifacts/onnx/ and checks parity with scikit-learn
+python -m aeromind export-onnx --trees hummingbird   # TensorRT-compatible graphs in artifacts/onnx-trt/ (needs .[hummingbird])
 python -m aeromind demo --backend onnx           # same pipeline, models run in ONNX Runtime
 python -m aeromind dashboard                     # writes artifacts/dashboard.html (open in a browser)
 python -m aeromind federated                     # FedAvg autoencoder demo
@@ -146,9 +148,64 @@ and the times cover the whole `process()` call, feature extraction included:
 Most of the gain is per-call overhead: scikit-learn is slow at predicting one row at a time. These
 are cloud-CPU numbers, not Jetson numbers.
 
-What this does not cover: the tree models use the ONNX-ML `TreeEnsembleRegressor` operator, which
-ONNX Runtime runs but **TensorRT does not support**. On a Jetson they would run on the CPU through
-ONNX Runtime unless rewritten as tensor operations. Nothing here has been run on edge hardware.
+These default graphs express the tree models with the ONNX-ML `TreeEnsembleRegressor` operator,
+which ONNX Runtime runs but **TensorRT does not support**. For TensorRT, use the Hummingbird export below.
+
+### TensorRT-compatible export (Hummingbird)
+
+```bash
+pip install -e ".[hummingbird]"     # adds torch and hummingbird-ml (export machine only)
+python -m aeromind export-onnx --trees hummingbird            # GEMM trees -> artifacts/onnx-trt/
+python -m aeromind export-onnx --trees hummingbird --strategy tree_trav --out artifacts/onnx-trt-tt
+```
+
+[Hummingbird](https://github.com/microsoft/hummingbird) compiles the Isolation Forest, the fault
+classifier and the three RUL quantile models into ordinary tensor operations (matrix multiplies and
+comparisons for `gemm`, gathers for `tree_trav`). Each converted ensemble is spliced into the same
+three graphs as before, so inputs, outputs, `manifest.json` and `OnnxBundle` are unchanged. The
+exporter refuses to write a graph containing any operator outside a list of operators TensorRT's ONNX
+parser supports (`TENSORRT_OPERATORS`), and the manifest records the operators used by each file.
+
+Three problems had to be fixed to make Hummingbird 0.4.12 work here:
+
+- **Wrong results.** Its scikit-learn HistGradientBoosting parser stores any leaf value or threshold
+  of exactly 0 as -1. This model has 57 zero-valued classifier leaves and one zero-valued RUL leaf, so
+  the stock conversion gave saturated probabilities (17% of predicted classes wrong) and RUL errors of
+  exactly 1 h. `onnx_export.py` swaps in a corrected parser during conversion.
+- **No export on current PyTorch.** PyTorch 2.9+ exports through `torch.export`, which cannot trace
+  Hummingbird's modules. The exporter uses PyTorch's TorchScript exporter (`dynamo=False`); tested with
+  torch 2.14. A future PyTorch that drops it will need a newer Hummingbird.
+- **Batch of one broke.** Hummingbird's `squeeze()` exports as a `Squeeze` with no axes, which also
+  drops the batch dimension when N = 1, the pipeline's case. The exporter pins each `Squeeze` to the
+  axes it removes at batch size 3; TensorRT wants static axes anyway.
+
+Hummingbird also only converts classifiers with integer labels, so the classifier is converted with
+labels 0–5. The class names stay in `manifest.json`.
+
+Results on this cloud CPU (ONNX Runtime, one thread). `evaluate` gives **identical** per-mode results on
+all four backends, and parity with scikit-learn is the same as for the ONNX-ML graphs above:
+
+| Backend | Files | Models only, one row (ms) | Full `process()` per window, mean / max (ms) |
+|---|---|---|---|
+| scikit-learn | joblib | n/a | 9.55 / 30.0 |
+| ONNX-ML trees | 1.8 MB | 0.15 | 0.53 / 5.6 |
+| Hummingbird GEMM | 9.4 MB | 1.09 | 1.31 / 8.0 |
+| Hummingbird tree traversal | 2.5 MB | 1.87 | 1.29 / 7.7 |
+
+On a CPU the tensor-op graphs are slower than ONNX-ML trees: GEMM evaluates every split of every tree
+as one dense matrix product, which suits a GPU rather than a CPU. **These graphs have not been parsed
+by TensorRT, built into an engine, or run on a Jetson.** The export environment had no GPU, and
+NVIDIA's package index was not reachable. On the device:
+
+```bash
+trtexec --onnx=artifacts/onnx-trt/classifier.onnx --minShapes=features:1x19 \
+        --optShapes=features:1x19 --maxShapes=features:64x19 --saveEngine=classifier.plan
+```
+
+and the same for `anomaly.onnx` (`features`, 19 columns) and `rul.onnx` (`trend_features`, 22 columns).
+Compare GEMM against `tree_trav` there and keep the faster one, then run `check_parity` against the
+engine outputs before trusting them. `hummingbird-ml` 0.4.12 pins `onnx<=1.16.1`, which has wheels up
+to Python 3.12, so use Python 3.12 or older for this export step; the device needs neither package.
 
 ## Demo dashboard
 
@@ -189,5 +246,5 @@ tests/            test_core.py, test_cmapss.py, test_onnx_dashboard.py
 
 1. Add public bearing run-to-failure data (e.g. NASA IMS / FEMTO) to exercise the vibration and classification path on real signals.
 2. Re-calibrate the RUL intervals (e.g. conformal prediction); coverage is currently below nominal.
-3. Benchmark the ONNX models on target hardware; rewrite the tree ensembles as tensor ops (e.g. Hummingbird) if they must run under TensorRT.
+3. Build the Hummingbird graphs with TensorRT on a Jetson, check parity on the device, and benchmark GEMM against tree traversal.
 4. Re-test federation with realistic, non-IID fleet data before claiming a benefit.
