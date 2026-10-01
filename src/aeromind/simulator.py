@@ -243,7 +243,7 @@ class LiveAircraft:
         self.phase_override: str | None = None
         self._ground = 25.0
 
-    def inject(self, mode: str, life: int = 240) -> None:
+    def inject(self, mode: str, life: int = 320) -> None:
         if mode != HEALTHY and mode not in FAULT_MODES:
             raise ValueError(f"unknown mode {mode!r}")
         self.mode, self.fault_start, self.fault_life = mode, self.t, (None if mode == HEALTHY else life)

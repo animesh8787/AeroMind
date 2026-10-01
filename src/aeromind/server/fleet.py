@@ -175,7 +175,7 @@ class Fleet:
             raise KeyError(f"unknown aircraft {tail}")
         return self.aircraft[tail]
 
-    def inject_component(self, tail: str, mode: str, life: int = 240):
+    def inject_component(self, tail: str, mode: str, life: int = 320):
         if mode not in FAULT_MODES:
             raise ValueError(f"unknown fault {mode!r}")
         self._ac(tail).sim.inject(mode, life)

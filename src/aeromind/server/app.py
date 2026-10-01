@@ -181,7 +181,7 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
         fault = body.get("fault")
         try:
             if fault in FAULT_MODES:
-                gs.fleet.inject_component(tail, fault, int(body.get("life", 240)))
+                gs.fleet.inject_component(tail, fault, int(body.get("life", 320)))  # inside the training range (250-450)
             elif fault in SENSOR_PRESETS:
                 gs.fleet.inject_sensor(tail, *SENSOR_PRESETS[fault])
             elif body.get("kind") and body.get("channel"):
