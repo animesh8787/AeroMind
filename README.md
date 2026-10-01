@@ -30,6 +30,20 @@ simulator ──> features ──> anomaly score ──> persistence gate ──
 | Jetson, FPGA DSP, OTA updates | | Not implemented |
 | ACARS / SWIM, MRO connectors | | Not implemented (advisories are plain JSON) |
 
+## Highlights (measured; regenerate with `python -m aeromind report`)
+
+- **Live ground station** with six simulated aircraft, live fault injection, sensor isolation and signed OTA updates.
+- **Flight-phase aware:** anomaly gate open on 0.0% of healthy flight windows (98.6% without phase awareness).
+- **Sensor health:** 7 kinds of injected sensor failure flagged in 1-11 windows with 0 false component advisories.
+- **Real data:** NASA IMS bearing, alarm and BPFO evidence 74.8 h before the outer-race failure; C-MAPSS RUL.
+- **Explains itself:** advisories carry computed physics evidence (bearing defect frequencies, current THD).
+- **Fits the downlink:** every advisory fits one ACARS block (max 141 of 220 characters).
+- **Decision + ROI:** P(failure before next check) → ground / replace / defer; fleet ROI with a sensitivity table.
+
+Docs: [architecture](docs/ARCHITECTURE.md) · [technical report](docs/TECHNICAL_REPORT.md) ·
+[demo script](docs/DEMO_SCRIPT.md) · [pitch metrics](docs/PITCH_METRICS.md) · [judge Q&A](docs/JUDGE_QA.md) ·
+[feature matrix](docs/FEATURE_MATRIX.md) · [Jetson kit](deploy/jetson/README.md)
+
 ## Live demo: ground station
 
 ```bash
@@ -68,6 +82,10 @@ python -m aeromind demo --backend onnx           # same pipeline, models run in 
 python -m aeromind dashboard                     # writes artifacts/dashboard.html (open in a browser)
 python -m aeromind federated                     # FedAvg autoencoder demo
 python -m aeromind cmapss                        # NASA C-MAPSS RUL benchmark (~2.5 min, downloads ~12 MB)
+python -m aeromind ims                           # NASA IMS real bearing run-to-failure (~1.1 GB download)
+python -m aeromind roi                           # fleet maintenance cost simulation + sensitivity
+python -m aeromind bench                         # edge size/latency/INT8 (CPU)
+python -m aeromind report                        # regenerate every metric into artifacts/report/
 
 # Optional PyTorch LSTM for remaining useful life (pip install -e ".[lstm]")
 python -m aeromind train --rul lstm --model artifacts/bundle-lstm.joblib    # ~30 s
