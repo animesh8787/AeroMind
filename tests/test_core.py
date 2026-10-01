@@ -107,3 +107,12 @@ def test_pipeline_flags_fault_and_emits_valid_json(small_bundle):
 def test_pipeline_quiet_on_healthy_run(small_bundle):
     _, adv = _run(small_bundle, HEALTHY, 250, seed=424243)
     assert adv == []
+
+
+def test_federated_rare_fault_sharing_transfers_unseen_faults():
+    from aeromind.federated import rare_fault_demo
+
+    r = rare_fault_demo(n_clients=5, seed=3, rounds=6, local_epochs=2)
+    assert r["local"]["unseen_fault_accuracy"] == 0.0  # it never saw those labels
+    assert r["federated"]["unseen_fault_accuracy"] > 0.3  # transfer happens (full run: 89-93%)
+    assert r["federated"]["healthy_called_faulty"] < 0.05

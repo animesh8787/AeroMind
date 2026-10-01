@@ -141,6 +141,11 @@ def _cmd_report(a) -> None:
 
 
 def _cmd_federated(a) -> None:
+    if a.rare_fault:
+        from .federated import rare_fault_demo
+
+        print(json.dumps(rare_fault_demo(a.clients, a.seed), indent=2))
+        return
     print(json.dumps(federated_demo(a.clients, a.seed), indent=2))
 
 
@@ -246,6 +251,8 @@ def main(argv: list[str] | None = None) -> None:
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)
     f.add_argument("--seed", type=int, default=0)
+    f.add_argument("--rare-fault", action="store_true",
+                   help="non-IID fleet: can an aircraft recognise fault types only other aircraft have seen?")
     f.set_defaults(fn=_cmd_federated)
 
     c = sub.add_parser("cmapss", help="RUL benchmark on NASA C-MAPSS (downloads the data if missing)")
