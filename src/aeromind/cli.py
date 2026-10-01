@@ -116,6 +116,18 @@ def _cmd_roi(a) -> None:
     print(json.dumps(out, indent=2))
 
 
+def _cmd_ims(a) -> None:
+    from .datasets import ims
+
+    try:
+        test = ims.download(a.data_dir)
+    except ims.DatasetUnavailable as e:
+        print(f"IMS data unavailable: {e}")
+        return
+    hours, X = ims.load_features(test)
+    print(json.dumps(ims.run(hours, X), indent=2))
+
+
 def _cmd_federated(a) -> None:
     print(json.dumps(federated_demo(a.clients, a.seed), indent=2))
 
@@ -200,6 +212,10 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--horizon", type=float, default=3000.0, help="flight hours per aircraft")
     r.add_argument("--seed", type=int, default=0)
     r.set_defaults(fn=_cmd_roi)
+
+    m = sub.add_parser("ims", help="NASA IMS real bearing run-to-failure (downloads ~1.1 GB on first use)")
+    m.add_argument("--data-dir", default="data/ims")
+    m.set_defaults(fn=_cmd_ims)
 
     f = sub.add_parser("federated", help="FedAvg autoencoder demo across simulated aircraft")
     f.add_argument("--clients", type=int, default=5)
