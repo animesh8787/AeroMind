@@ -73,7 +73,8 @@ def _detection_model(evaluation: dict):
 
 def simulate(evaluation: dict, a: Assumptions | None = None) -> dict:
     a = a or Assumptions()
-    rng = np.random.default_rng(a.seed)
+    # Separate streams: the failure history must not depend on detection settings (common random numbers).
+    rng_fail, rng_det, rng_fix, rng_fa = (np.random.default_rng([a.seed, k]) for k in range(4))
     det = _detection_model(evaluation)
     c = a.costs
     scale = a.mean_life_fh / _weibull_mean_factor(a.weibull_shape)  # Weibull scale for that mean
@@ -87,13 +88,14 @@ def simulate(evaluation: dict, a: Assumptions | None = None) -> dict:
         # Same failure history for all three policies (common random numbers).
         events, t = [], 0.0
         while True:
-            t += scale * rng.weibull(a.weibull_shape)
+            t += scale * rng_fail.weibull(a.weibull_shape)
             if t > a.horizon_fh:
                 break
-            mode = FAULT_MODES[rng.integers(len(FAULT_MODES))]
+            mode = FAULT_MODES[rng_fail.integers(len(FAULT_MODES))]
             p_det, leads = det[mode]
-            detected = rng.random() < p_det and len(leads) > 0
-            events.append((t, mode, detected, float(rng.choice(leads)) if detected else 0.0))
+            u, k = rng_det.random(), rng_det.random()  # always drawn, whatever the detection model
+            detected = u < p_det and len(leads) > 0
+            events.append((t, mode, detected, float(leads[int(k * len(leads))]) if detected else 0.0))
 
         # Reactive: every failure is unscheduled.
         for _, mode, _, _ in events:
@@ -112,10 +114,10 @@ def simulate(evaluation: dict, a: Assumptions | None = None) -> dict:
         # Renewal: a failure only happens if its age since the last replacement reaches the Weibull draw.
         tt = 0.0
         while True:
-            life = scale * rng.weibull(a.weibull_shape)
+            life = scale * rng_fix.weibull(a.weibull_shape)
             next_sched = (np.floor(tt / a.fixed_interval_fh) + 1) * a.fixed_interval_fh
             if tt + life < min(next_sched, a.horizon_fh):
-                mode = FAULT_MODES[rng.integers(len(FAULT_MODES))]
+                mode = FAULT_MODES[rng_fix.integers(len(FAULT_MODES))]
                 tt += life
                 r.unscheduled_removals += 1
                 r.parts_used += 1
@@ -144,7 +146,7 @@ def simulate(evaluation: dict, a: Assumptions | None = None) -> dict:
                     r.aog_hours += a.early_grounding_aog_hours
                     r.cost += c.planned_cost(mode) + a.early_grounding_aog_hours * c.aog_cost_per_hour
             r.parts_used += 1
-        n_fa = rng.poisson(fa_per_fh * a.horizon_fh)
+        n_fa = rng_fa.poisson(fa_per_fh * a.horizon_fh)
         r.false_inspections += n_fa
         r.cost += n_fa * a.false_advisory_inspection_cost
 
