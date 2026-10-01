@@ -11,6 +11,7 @@ import numpy as np
 from .alerts import ACTIONS, PRIORITY_RANK, Advisory
 from .config import HEALTHY, HOURS_PER_WINDOW, RAW_BYTES_PER_WINDOW
 from .features import SequenceTracker, TrendTracker, extract_features
+from .physics import evidence
 from .sensor_health import SensorAdvisory, SensorHealthMonitor
 from .simulator import SensorWindow
 from .train import ModelBundle
@@ -148,6 +149,7 @@ class EdgePipeline:
         self._last = (w.t, fault, priority)
 
         action, parts = ACTIONS[fault]
+        z_top = b.anomaly.explain_z(x)
         return Advisory(
             component=self.component,
             window=w.t,
@@ -161,5 +163,6 @@ class EdgePipeline:
             priority=priority,
             recommended_action=action,
             parts_logistics=parts,
-            contributing_signals=tuple(b.anomaly.explain(x)),
+            contributing_signals=tuple(name for name, _ in z_top),
+            evidence=evidence(w, fault, z_top),
         )

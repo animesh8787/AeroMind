@@ -33,10 +33,12 @@ class Advisory:
     recommended_action: str
     parts_logistics: str
     contributing_signals: tuple[str, ...]
+    evidence: tuple[str, ...] = ()  # computed from the signals (physics.evidence)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["contributing_signals"] = list(self.contributing_signals)
+        d["evidence"] = list(self.evidence)
         return d
 
     def to_json(self) -> str:

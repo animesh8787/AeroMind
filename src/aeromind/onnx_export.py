@@ -535,8 +535,11 @@ class OnnxAnomaly:
         return self._s.run(["score"], {"features": _f32(X)})[0].astype(np.float64)
 
     def explain(self, x: np.ndarray, k: int = 3) -> list[str]:
-        z = np.abs(self._s.run(["z"], {"features": _f32(x)})[0][0])
-        return [self._names[i] for i in np.argsort(z)[::-1][:k]]
+        return [name for name, _ in self.explain_z(x, k)]
+
+    def explain_z(self, x: np.ndarray, k: int = 3) -> list[tuple[str, float]]:
+        z = self._s.run(["z"], {"features": _f32(x)})[0][0].astype(np.float64)
+        return [(self._names[i], float(z[i])) for i in np.argsort(np.abs(z))[::-1][:k]]
 
 
 class OnnxClassifier:

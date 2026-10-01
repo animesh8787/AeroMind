@@ -72,6 +72,11 @@ class AnomalyDetector:
         combined = ((raw - self._norm1[0]) / self._norm1[1]).mean(axis=1)
         return (combined - self._norm2[0]) / self._norm2[1]
 
+    def explain_z(self, x: np.ndarray, k: int = 3) -> list[tuple[str, float]]:
+        """The ``k`` features furthest from their healthy mean, with signed z-scores."""
+        z = self.scaler.transform(np.atleast_2d(x))[0]
+        return [(FEATURE_NAMES[i], float(z[i])) for i in np.argsort(np.abs(z))[::-1][:k]]
+
     def explain(self, x: np.ndarray, k: int = 3) -> list[str]:
         """Names of the ``k`` features furthest from their healthy mean (in std devs)."""
         z = np.abs(self.scaler.transform(np.atleast_2d(x))[0])
