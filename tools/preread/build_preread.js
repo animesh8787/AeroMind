@@ -175,7 +175,7 @@ const children = [
     ["No real flight data, no flight or hardware-in-the-loop test, no regulatory work. Simulator faults are synthetic; IMS is one rig.", "Next 3 months: validate on more public run-to-failure sets (CWRU, N-CMAPSS) and tune thresholds on partner data."],
     ["Jetson and TensorRT export is prepared (Hummingbird tensor graphs, build scripts) but not built or run on hardware. All timings are CPU.", "3 to 6 months: Jetson bench validation with replayed sensor data; measure latency, memory and power."],
     ["CWRU data was blocked by the build environment (HTTP 403). N-CMAPSS (15.8 GB) was not run.", "6 to 12 months: hardware-in-the-loop on a test rig, then a shadow-mode trial beside an existing HUMS."],
-    ["The ground-side LLM maintenance copilot is not built (it needs an API key). ROI costs and rates are assumptions.", "Alongside: MRO connectors, the LLM copilot for work-order text, and a regulatory-alignment study."],
+    ["A ground-side LLM maintenance copilot explains the deterministic output (Groq, Ollama or rule-based templates); the quality of live-model answers has not been evaluated. ROI costs and rates are assumptions. A Raspberry Pi 5 edge path is prepared; no Pi measurement exists.", "Alongside: scored evaluation of live copilot answers, Raspberry Pi 5 benchmarks, MRO connectors, and a regulatory-alignment study."],
   ]),
 ];
 

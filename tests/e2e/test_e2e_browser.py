@@ -111,3 +111,14 @@ def test_roi_panel_and_whatif(page):
     page.dispatch_event('[data-testid="whatif"]', "input")
     _wait(lambda: "risk before check" in text(page, "whatif-result"))
     _wait(lambda: "AeroMind" in text(page, "roi"), timeout=240)
+
+
+def test_copilot_panel_separates_deterministic_output_from_explanation(page):
+    page.click('[data-testid="aircraft-VT-AMA03"]')  # still has a bearing advisory
+    assert text(page, "llm-status").startswith("LLM STATUS:")
+    page.click('[data-testid="cp-explain_alert"]')
+    _wait(lambda: "Fault: bearing_wear" in page.inner_text('[data-testid="cp-deterministic"]'))
+    ai = _wait(lambda: page.inner_text('[data-testid="cp-ai"]'))
+    assert "technician review required" in ai.lower()  # label added by code, whichever way the text was produced
+    page.click('[data-testid="cp-work_order"]')
+    _wait(lambda: "WORK ORDER DRAFT" in page.inner_text('[data-testid="cp-convo"]'))
