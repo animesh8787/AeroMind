@@ -7,19 +7,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
+import os
 import shutil
 from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
 from multiprocessing import get_context
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from ..core.config import FAULT_MODES
+from ..llm import Copilot, CopilotRequest, load_dotenv
+from ..llm.copilot import UnknownAircraft, UnknownTask
 from ..security.signing import ModelSlots, PackageRejected, generate_keypair, sign_package
 from .fleet import SENSOR_PRESETS, Fleet
+from .remote import IngestError, RemoteRegistry
 
 DEFAULT_MODEL_DIR = "artifacts/onnx-fleet"
 
@@ -58,9 +63,31 @@ def compute_roi_job(model_dir: str) -> dict:
             "assumptions": r["assumptions"], "evaluation_runs_per_mode": 3}
 
 
+class FleetSource:
+    """What the copilot may read: the simulated fleet plus any remote edge devices (structured outputs only)."""
+
+    def __init__(self, gs: "GroundStation"):
+        self.gs = gs
+
+    def tails(self) -> list[str]:
+        return [*self.gs.fleet.aircraft, *self.gs.remote.aircraft]
+
+    def detail(self, tail: str) -> dict:
+        if tail in self.gs.fleet.aircraft:
+            return self.gs.fleet.aircraft[tail].detail()
+        return self.gs.remote.aircraft[tail].detail()
+
+    def events(self, tail: str) -> list[dict]:
+        if tail in self.gs.fleet.aircraft:
+            return list(self.gs.fleet.aircraft[tail].events)
+        return list(self.gs.remote.aircraft[tail].events)
+
+
 class GroundStation:
     def __init__(self, model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = "artifacts/ground",
-                 speed: float = 4.0, seed: int = 4242, compute_roi: bool = False):
+                 speed: float = 4.0, seed: int = 4242, compute_roi: bool = False, copilot: Copilot | None = None):
+        self.copilot = copilot if copilot is not None else Copilot()
+        self.remote = RemoteRegistry()
         self.workdir = Path(workdir)
         self.private_key, self.public_key = _keys(self.workdir)
         self.packages = self.workdir / "packages"
@@ -135,7 +162,7 @@ class GroundStation:
     async def broadcast(self):
         if not self.selected:
             return
-        snap = self.fleet.snapshot()
+        snap = {**self.fleet.snapshot(), "remote": [a.summary() for a in self.remote.aircraft.values()]}
         details = {t: self.fleet.aircraft[t].detail() for t in set(self.selected.values()) if t in self.fleet.aircraft}
         for ws, tail in list(self.selected.items()):
             try:
@@ -145,8 +172,11 @@ class GroundStation:
 
 
 def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = "artifacts/ground",
-               speed: float = 4.0, seed: int = 4242, compute_roi: bool = True) -> FastAPI:
-    gs = GroundStation(model_dir, workdir, speed, seed, compute_roi=compute_roi)
+               speed: float = 4.0, seed: int = 4242, compute_roi: bool = True,
+               copilot: Copilot | None = None) -> FastAPI:
+    if copilot is None:
+        load_dotenv()  # optional .env (never committed); environment variables win
+    gs = GroundStation(model_dir, workdir, speed, seed, compute_roi=compute_roi, copilot=copilot)
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -169,7 +199,7 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
 
     @app.get("/api/fleet")
     def fleet():
-        return gs.fleet.snapshot()
+        return {**gs.fleet.snapshot(), "remote": [a.summary() for a in gs.remote.aircraft.values()]}
 
     @app.get("/api/aircraft/{tail}")
     def aircraft(tail: str):
@@ -237,6 +267,41 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
         s = Schedule(hours_to_next_check=float(body.get("hours_to_next_check", 10)),
                      leg_hours=float(body.get("leg_hours", 2)), check_station=a.station)
         return decide(a.last_advisory, s).to_dict()
+
+    # ---- LLM maintenance copilot (ground side; explains deterministic output, never replaces it)
+    @app.get("/api/llm/status")
+    def llm_status():
+        return gs.copilot.status()
+
+    @app.post("/api/copilot")
+    def copilot_ask(body: dict = Body(...)):
+        req = CopilotRequest(task=str(body.get("task") or ""), tail=str(body.get("tail") or ""),
+                             question=str(body.get("question") or ""),
+                             hours_to_next_check=(float(body["hours_to_next_check"])
+                                                  if body.get("hours_to_next_check") is not None else None))
+        try:
+            return gs.copilot.ask(req, FleetSource(gs)).to_dict()
+        except UnknownAircraft as e:
+            raise HTTPException(404, str(e.args[0])) from e
+        except UnknownTask as e:
+            raise HTTPException(400, str(e)) from e
+
+    # ---- advisories from a remote edge agent (same EdgePipeline, other machine)
+    @app.post("/api/ingest")
+    def ingest(body: dict = Body(...), x_aeromind_token: str | None = Header(default=None)):
+        required = os.environ.get("AEROMIND_INGEST_TOKEN")
+        if required and not hmac.compare_digest(x_aeromind_token or "", required):
+            raise HTTPException(401, "invalid or missing ingest token")
+        try:
+            ev = gs.remote.ingest(body)
+        except IngestError as e:
+            raise HTTPException(400, str(e)) from e
+        gs.fleet.events.appendleft(ev)
+        return {"ok": True, "acars": ev["acars"]}
+
+    @app.get("/api/remote")
+    def remote():
+        return [a.summary() for a in gs.remote.aircraft.values()]
 
     @app.post("/api/ota")
     def ota(body: dict = Body(...)):

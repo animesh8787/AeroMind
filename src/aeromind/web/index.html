@@ -35,6 +35,10 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); display: f
 .chip.sim { border-color: var(--advisory); }
 .chip.live::before { content: "●"; color: var(--ok); margin-right: 5px; }
 .chip.down::before { content: "●"; color: var(--critical); margin-right: 5px; }
+.chip.llm::before { content: "●"; margin-right: 5px; }
+.chip.llm-ONLINE::before, .chip.llm-LOCAL::before { color: var(--ok); }
+.chip.llm-FALLBACK::before { color: var(--advisory); }
+.chip.llm-UNAVAILABLE::before { color: var(--critical); }
 .spacer { flex: 1; }
 button, select { font: 500 12px var(--font); color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
   border-radius: var(--radius); padding: 6px 9px; cursor: pointer; }
@@ -86,6 +90,24 @@ canvas { display: block; width: 100%; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 .acars { font: 11px/1.4 var(--mono); background: var(--bg); border: 1px dashed var(--axis); border-radius: 4px; padding: 6px 8px; overflow-wrap: anywhere; }
 .note { font-size: 11px; color: var(--muted); }
+/* copilot: deterministic output and AI text are always shown in separate, labelled blocks */
+.cp-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 8px; }
+.cp-row input[type=number] { width: 64px; font: 12px var(--font); padding: 5px 6px; border: 1px solid var(--axis); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.cp-convo { display: grid; gap: 10px; max-height: 520px; overflow: auto; margin: 10px 0; }
+.cp-convo:empty { display: none; }
+.turn { display: grid; gap: 6px; }
+.turn .q { justify-self: end; max-width: 80%; background: var(--accent-wash); border-radius: var(--radius); padding: 6px 10px; }
+.det, .ai { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; display: grid; gap: 4px; min-width: 0; }
+.det { border-left: 4px solid var(--ink-2); background: var(--bg); }
+.ai { border-left: 4px solid var(--accent); }
+.ai.tmpl { border-left-color: var(--advisory); }
+.tag { font: 700 10px/1 var(--font); letter-spacing: .09em; text-transform: uppercase; color: var(--ink-2); }
+.det pre { margin: 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai .txt { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai .lbl { font-size: 11px; font-weight: 600; color: var(--ink-2); }
+.ai .warn { font-size: 11px; color: var(--muted); }
+#cp-form { display: flex; gap: 6px; }
+#cp-q { flex: 1; min-width: 0; font: 13px var(--font); padding: 7px 9px; border: 1px solid var(--axis); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
 /* controls + log */
 .btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .ctl { display: grid; gap: 10px; }
@@ -106,6 +128,7 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
   <span class="chip sim">Simulated fleet · fictional aircraft</span>
   <span class="chip" id="model" data-testid="model-version">model v1</span>
   <span class="chip down" id="conn">connecting</span>
+  <span class="chip llm llm-FALLBACK" id="llm" data-testid="llm-status" title="Ground-side LLM copilot status">LLM STATUS: checking</span>
   <span class="spacer"></span>
   <label class="note" for="speed">Speed</label>
   <select id="speed"><option value="2">2 windows/s</option><option value="4" selected>4 windows/s</option><option value="8">8 windows/s</option><option value="16">16 windows/s</option></select>
@@ -116,6 +139,7 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
   <aside class="panel">
     <h2>Fleet</h2>
     <div class="fleet" id="fleet" data-testid="fleet"></div>
+    <div id="remote" data-testid="remote" style="margin-top:10px"></div>
   </aside>
 
   <main class="stack" id="detail">
@@ -161,6 +185,17 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
           <div class="note" id="wi-out" data-testid="whatif-result"></div>
         </div></section>
     </div>
+    <section class="panel" id="copilot" aria-label="AI Maintenance Copilot" data-testid="copilot">
+      <h2>AI Maintenance Copilot <span class="chip llm llm-FALLBACK" id="cp-status" data-testid="cp-status">LLM STATUS: checking</span></h2>
+      <div class="cp-row">
+        <label class="note" for="cp-tail">Aircraft</label><select id="cp-tail" data-testid="cp-tail"></select>
+        <label class="note" for="cp-hours">Defer next check by</label><input id="cp-hours" type="number" min="1" max="500" value="24" data-testid="cp-hours"><span class="note">FH</span>
+      </div>
+      <div class="btns" id="cp-quick"></div>
+      <p class="note"><b>DETERMINISTIC AEROMIND OUTPUT</b> is computed by the pipeline and shown verbatim; <b>AI COPILOT</b> text only explains it. The copilot explains the deterministic AeroMind output above. It cannot change it, control the aircraft, or approve maintenance. Aircraft are simulated.</p>
+      <div class="cp-convo" id="cp-convo" data-testid="cp-convo" aria-live="polite"></div>
+      <form id="cp-form"><input id="cp-q" maxlength="500" placeholder="Ask about this aircraft, e.g. Why is this aircraft at risk?" aria-label="Question for the copilot" data-testid="cp-input"><button type="submit" data-testid="cp-ask">Ask</button></form>
+    </section>
     <section class="panel"><h2>Latest work order</h2><div id="wo" data-testid="work-order"><span class="note">None.</span></div></section>
   </main>
 
@@ -229,7 +264,9 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
     try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
     catch (e) { console.warn(e); }
   }
-  function select(tail) { selected = tail; if ($("wi-out")) $("wi-out").textContent = ""; $("ctl-tail").textContent = tail; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ select: tail })); }
+  function select(tail) { selected = tail; if ($("wi-out")) $("wi-out").textContent = ""; $("ctl-tail").textContent = tail;
+    if ($("cp-tail") && $("cp-tail").value !== tail && [...$("cp-tail").options].some((o) => o.value === tail)) { $("cp-tail").value = tail; if (typeof renderConvo === "function") renderConvo(); }
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ select: tail })); }
 
   // ---------------------------------------------------------------- charts
   function setup(c) {
@@ -419,8 +456,76 @@ footer { margin-top: 14px; color: var(--muted); font-size: 11px; max-width: 90ch
   function render(msg) {
     last = msg; if (!selected) select(msg.aircraft[0].tail);
     $("model").textContent = "model " + msg.model_version; $("pause").textContent = msg.paused ? "Resume" : "Pause";
-    renderFleet(msg); if (msg.detail && msg.detail.tail === selected) renderDetail(msg.detail); renderLog(msg.events);
+    renderFleet(msg); renderRemote(msg); syncCopilotTails(msg);
+    if (msg.detail && msg.detail.tail === selected) renderDetail(msg.detail); renderLog(msg.events);
   }
+
+  // ---------------------------------------------------------------- AI maintenance copilot
+  // The server returns the deterministic AeroMind facts and the explanation text as separate fields;
+  // they are rendered in separate, labelled blocks and never merged. Text is inserted with textContent.
+  const QUICK = [["explain_alert", "Explain Alert"], ["summarize_aircraft", "Summarize Aircraft"], ["why_fault", "Why This Fault?"],
+                 ["explain_rul", "Explain RUL"], ["maintenance_assist", "What Should Maintenance Inspect?"],
+                 ["what_if", "What If We Defer?"], ["work_order", "Draft Work Order"], ["fleet_summary", "Fleet Summary"]];
+  const convo = {}; let cpBusy = false, cpTails = "";
+  QUICK.forEach(([task, label]) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    b.setAttribute("data-testid", "cp-" + task); b.onclick = () => askCopilot(task, label, true); $("cp-quick").appendChild(b); });
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function llmChip(node, st) {
+    node.className = "chip llm llm-" + st.status;
+    const who = st.provider && st.provider !== "deterministic" ? " · " + st.provider + (st.model ? " " + st.model : "") : "";
+    node.textContent = "LLM STATUS: " + st.status + who;
+    node.title = st.status === "FALLBACK" ? "No LLM reachable: answers are rule-based templates" : "";
+  }
+  async function refreshLlm() {
+    try { const st = await (await fetch("/api/llm/status")).json(); llmChip($("llm"), st); llmChip($("cp-status"), st); }
+    catch (e) { const st = { status: "UNAVAILABLE" }; llmChip($("llm"), st); llmChip($("cp-status"), st); }
+    setTimeout(refreshLlm, 8000);
+  }
+  function turnEl(t) {
+    const w = el("div", "turn"); w.appendChild(el("div", "q", t.q));
+    if (t.pending) { w.appendChild(el("div", "note", "Asking the copilot…")); return w; }
+    if (t.err) { w.appendChild(el("div", "note", "Copilot request failed: " + t.err)); return w; }
+    const r = t.res, det = el("div", "det"); det.setAttribute("data-testid", "cp-deterministic");
+    det.appendChild(el("div", "tag", r.deterministic.title)); det.appendChild(el("pre", "", r.deterministic.lines.join("\n")));
+    const ai = el("div", "ai" + (r.ai_generated ? "" : " tmpl")); ai.setAttribute("data-testid", "cp-ai");
+    ai.appendChild(el("div", "tag", r.ai_generated ? `AI COPILOT · ${r.provider} · ${r.model}` : "RULE-BASED TEMPLATE · no LLM was used"));
+    ai.appendChild(el("div", "txt", r.text)); ai.appendChild(el("div", "lbl", r.label));
+    r.warnings.forEach((x) => ai.appendChild(el("div", "warn", x))); ai.appendChild(el("div", "warn", r.note));
+    w.appendChild(det); w.appendChild(ai); return w;
+  }
+  function renderConvo() {
+    const c = $("cp-convo"); c.textContent = ""; (convo[$("cp-tail").value] || []).forEach((t) => c.appendChild(turnEl(t)));
+    c.scrollTop = c.scrollHeight;
+  }
+  async function askCopilot(task, question, quick) {
+    const tail = $("cp-tail").value; if (cpBusy || (!tail && task !== "fleet_summary")) return;
+    cpBusy = true; const turn = { q: question, pending: true }; (convo[tail] = convo[tail] || []).push(turn); renderConvo();
+    try {
+      const r = await fetch("/api/copilot", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tail, task, question, hours_to_next_check: task === "what_if" && quick ? Number($("cp-hours").value) : null }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || r.status);
+      turn.res = d; llmChip($("cp-status"), { status: d.llm_status, provider: d.provider, model: d.model });
+    } catch (e) { turn.err = String(e.message || e); }
+    turn.pending = false; cpBusy = false; renderConvo();
+  }
+  $("cp-form").onsubmit = (e) => { e.preventDefault(); const q = $("cp-q").value.trim(); if (!q) return; $("cp-q").value = ""; askCopilot("", q, false); };
+  $("cp-tail").onchange = () => { const t = $("cp-tail").value; if (last && last.aircraft.some((a) => a.tail === t)) select(t); renderConvo(); };
+  function syncCopilotTails(msg) {
+    const tails = msg.aircraft.map((a) => a.tail).concat((msg.remote || []).map((r) => r.tail)), key = tails.join(",");
+    if (key === cpTails) return; cpTails = key; const cur = $("cp-tail").value || selected; $("cp-tail").textContent = "";
+    tails.forEach((t) => { const o = document.createElement("option"); o.value = o.textContent = t; $("cp-tail").appendChild(o); });
+    if (tails.includes(cur)) $("cp-tail").value = cur; renderConvo();
+  }
+  function renderRemote(msg) {
+    const box = $("remote"); box.textContent = ""; if (!(msg.remote || []).length) return;
+    box.appendChild(el("h2", "", "Remote edge devices"));
+    msg.remote.forEach((r) => { const d = el("div", "ac"); d.setAttribute("data-testid", "remote-" + r.tail);
+      const top = el("div", "top"); top.appendChild(el("span", "tail", r.tail)); top.appendChild(el("span", "pill s-" + r.status, r.status)); d.appendChild(top);
+      d.appendChild(el("div", "meta", `${r.fault ? human(r.fault) : "no fault"} · ${r.fh} FH${r.model_version ? " · " + r.model_version : ""}`));
+      d.appendChild(el("div", "meta", r.last_seen_s_ago != null ? `last advisory ${r.last_seen_s_ago} s ago` : ""));
+      box.appendChild(d); });
+  }
+  refreshLlm();
 
   // ---------------------------------------------------------------- connection
   function connect() {

@@ -31,6 +31,14 @@ from .schemas import (AI_LABEL, FALLBACK, TASKS, TEMPLATE_LABEL, UNAVAILABLE, Ad
 _FAULT_WORDS = ("bearing_wear", "oil_contamination", "overheating", "electrical_fault", "pressure_leak")
 
 
+class UnknownAircraft(KeyError):
+    """The requested tail is not in the fleet (the API maps this to 404)."""
+
+
+class UnknownTask(ValueError):
+    """The requested copilot task does not exist (the API maps this to 400)."""
+
+
 class FleetSource(Protocol):
     """What the copilot needs from the ground station (kept as a protocol so tests can fake it)."""
 
@@ -83,10 +91,10 @@ class Copilot:
     def ask(self, req: CopilotRequest, source: FleetSource) -> CopilotResponse:
         task = req.task or infer_task(req.question)
         if task not in TASKS:
-            raise ValueError(f"unknown copilot task {task!r}")
+            raise UnknownTask(f"unknown copilot task {task!r}")
         try:
             return self._answer(task, req, source)
-        except (KeyError, ValueError):
+        except (UnknownAircraft, UnknownTask):
             raise
         except Exception as e:  # the copilot must never take the ground station down
             return CopilotResponse(task, req.tail, {"title": "DETERMINISTIC AEROMIND OUTPUT", "lines": []},
@@ -107,7 +115,7 @@ class Copilot:
             actions = {a["decision"] for a in context["needs_attention"] if a["decision"]}
         else:
             if req.tail not in tails:
-                raise KeyError(f"unknown aircraft {req.tail!r}")
+                raise UnknownAircraft(f"unknown aircraft {req.tail!r}")
             context = build_aircraft_context(source.detail(req.tail), source.events(req.tail))
             if task == "what_if":
                 delay = req.hours_to_next_check if req.hours_to_next_check is not None else parse_delay_hours(question)
