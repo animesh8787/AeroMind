@@ -17,8 +17,8 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from ..config import FAULT_MODES
-from ..signing import ModelSlots, PackageRejected, generate_keypair, sign_package
+from ..core.config import FAULT_MODES
+from ..security.signing import ModelSlots, PackageRejected, generate_keypair, sign_package
 from .fleet import SENSOR_PRESETS, Fleet
 
 DEFAULT_MODEL_DIR = "artifacts/onnx-fleet"
@@ -28,8 +28,8 @@ def ensure_model(model_dir: str | Path) -> Path:
     """The phase-aware ONNX model the fleet runs; trained and exported on first start (~20 s)."""
     d = Path(model_dir)
     if not (d / "manifest.json").exists():
-        from ..onnx_export import export_onnx
-        from ..train import TrainConfig, train
+        from ..edge.onnx_export import export_onnx
+        from ..core.train import TrainConfig, train
 
         print(f"No model at {d}: training a flight-phase model with conformal RUL (about 20 s)...", flush=True)
         export_onnx(train(TrainConfig(phases=True, conformal=True)), d)
@@ -48,9 +48,9 @@ def _keys(workdir: Path) -> tuple[bytes, bytes]:
 
 def compute_roi_job(model_dir: str) -> dict:
     """Fleet ROI from a quick measured evaluation of the model in ``model_dir`` (runs in a worker process)."""
-    from ..evaluate import evaluate
-    from ..onnx_export import OnnxBundle
-    from ..roi import Assumptions, sensitivity, simulate
+    from ..evaluation.evaluate import evaluate
+    from ..edge.onnx_export import OnnxBundle
+    from ..maintenance.roi import Assumptions, sensitivity, simulate
 
     ev = evaluate(OnnxBundle(model_dir), runs_per_mode=3, healthy_runs=3, phases=True)
     r = simulate(ev, Assumptions())
@@ -229,7 +229,7 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
     @app.post("/api/aircraft/{tail}/whatif")
     def whatif(tail: str, body: dict = Body(...)):
         """The decision for the latest advisory if the next check were ``hours_to_next_check`` away."""
-        from ..decision import Schedule, decide
+        from ..maintenance.decision import Schedule, decide
 
         a = ac(tail)
         if a.last_advisory is None:

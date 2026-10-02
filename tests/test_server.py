@@ -6,9 +6,9 @@ pytest.importorskip("fastapi")
 pytest.importorskip("cryptography")
 pytest.importorskip("onnxruntime")
 
-from aeromind.onnx_export import export_onnx  # noqa: E402
+from aeromind.edge.onnx_export import export_onnx  # noqa: E402
 from aeromind.server.app import GroundStation  # noqa: E402
-from aeromind.train import TrainConfig, train  # noqa: E402
+from aeromind.core.train import TrainConfig, train  # noqa: E402
 
 
 @pytest.fixture(scope="module")

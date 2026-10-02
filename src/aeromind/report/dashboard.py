@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
-from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RAW_BYTES_PER_WINDOW
-from .features import FEATURE_NAMES
-from .pipeline import EdgePipeline, PipelineConfig
-from .simulator import simulate_run
+from ..core.config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RAW_BYTES_PER_WINDOW
+from ..core.features import FEATURE_NAMES
+from ..edge.pipeline import EdgePipeline, PipelineConfig
+from ..core.simulator import simulate_run
 
 # Seeds are disjoint from training (0..~6000) and from ``evaluate`` (9,000,000+).
 DASHBOARD_SEED_BASE = 7_000_000
@@ -116,7 +116,7 @@ def build_dashboard(bundle, out_path: str | Path, backend: str, scenarios: list[
         "scenarios": [record_scenario(bundle, sc) for sc in scenarios],
     }
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    template = resources.files("aeromind").joinpath("dashboard_template.html").read_text(encoding="utf-8")
+    template = resources.files("aeromind.report").joinpath("dashboard_template.html").read_text(encoding="utf-8")
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(template.replace("/*__AEROMIND_DATA__*/null", payload), encoding="utf-8")

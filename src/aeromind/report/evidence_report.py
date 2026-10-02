@@ -13,14 +13,14 @@ from pathlib import Path
 
 import numpy as np
 
-from .acars import MAX_CHARS, encode
-from .config import FAULT_MODES, HEALTHY
-from .evaluate import evaluate
-from .onnx_export import OnnxBundle, export_onnx
-from .pipeline import EdgePipeline, PipelineConfig
-from .sensor_health import SensorFault, SensorFaultInjector
-from .simulator import PHASES, simulate_run
-from .train import TrainConfig, train
+from ..communications.acars import MAX_CHARS, encode
+from ..core.config import FAULT_MODES, HEALTHY
+from ..evaluation.evaluate import evaluate
+from ..edge.onnx_export import OnnxBundle, export_onnx
+from ..edge.pipeline import EdgePipeline, PipelineConfig
+from ..edge.sensor_health import SensorFault, SensorFaultInjector
+from ..core.simulator import PHASES, simulate_run
+from ..core.train import TrainConfig, train
 
 SENSOR_CASES = [("stuck", "temperature"), ("flatline", "pressure"), ("drift", "vibration"), ("dropout", "acoustic"),
                 ("spike", "pressure"), ("out_of_range", "temperature"), ("dropout", "oil_debris")]
@@ -131,18 +131,18 @@ def generate(out_dir: str | Path = "artifacts/report", cmapss_dir: str | Path = 
     res["acars"] = acars_sizes(m_fleet)
 
     log("fleet ROI...")
-    from .roi import Assumptions, sensitivity, simulate
+    from ..maintenance.roi import Assumptions, sensitivity, simulate
 
     roi = simulate(ev_fleet, Assumptions())
     res["roi"] = {"policies": roi["policies"], "assumptions": roi["assumptions"], "sensitivity": sensitivity(ev_fleet)}
 
     log("edge benchmark...")
-    from .bench import benchmark
+    from ..edge.bench import benchmark
 
     res["edge_benchmark"] = benchmark(out / "models/fleet", n=500, int8_dir=out / "models/fleet-int8")
 
     log("NASA IMS...")
-    from .datasets import ims
+    from ..datasets import ims
 
     test = Path(ims_dir) / "2nd_test"
     if test.is_dir():
@@ -152,7 +152,7 @@ def generate(out_dir: str | Path = "artifacts/report", cmapss_dir: str | Path = 
         res["ims"] = {"unavailable": f"{test} not found; run python -m aeromind ims to download (~1.1 GB)"}
 
     log("NASA C-MAPSS...")
-    from . import cmapss
+    from ..datasets import cmapss
 
     if (Path(cmapss_dir) / "train_FD001.txt").exists():
         cm = {}
@@ -166,7 +166,7 @@ def generate(out_dir: str | Path = "artifacts/report", cmapss_dir: str | Path = 
         res["cmapss_hgb_conformal"] = {"unavailable": "run python -m aeromind cmapss once to download"}
 
     log("federated rare-fault sharing...")
-    from .federated import rare_fault_demo
+    from ..learning.federated import rare_fault_demo
 
     fed = [rare_fault_demo(seed=s) for s in range(3)]
     res["federated_rare_fault"] = {

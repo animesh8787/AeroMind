@@ -32,7 +32,7 @@ aeromind = "aeromind.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-aeromind = ["dashboard_template.html", "web/*.html"]
+aeromind = ["report/dashboard_template.html", "web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

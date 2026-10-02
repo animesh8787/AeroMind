@@ -18,11 +18,11 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import FAULT_MODES, HEALTHY
-from .features import extract_features
+from ..core.config import FAULT_MODES, HEALTHY
+from ..core.features import extract_features
 from .onnx_export import FILES, OnnxBundle
 from .pipeline import EdgePipeline
-from .simulator import simulate_run
+from ..core.simulator import simulate_run
 
 
 def _rss_mb() -> float | None:

@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from .config import FAULT_MODES
+from ..core.config import FAULT_MODES
 from .decision import CostAssumptions
 
 

@@ -31,7 +31,7 @@ from dataclasses import asdict, dataclass, field, replace
 
 import numpy as np
 
-from .simulator import SensorWindow
+from ..core.simulator import SensorWindow
 
 CHANNELS = ("vibration", "acoustic", "current", "voltage", "temperature", "pressure", "oil_debris")
 AC_CHANNELS = ("vibration", "acoustic", "current")

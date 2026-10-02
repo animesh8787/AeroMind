@@ -33,9 +33,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .features import FEATURE_NAMES, N_FEATURES, N_TREND_FEATURES
-from .models.rul import QUANTILES
-from .train import ModelBundle
+from ..core.features import FEATURE_NAMES, N_FEATURES, N_TREND_FEATURES
+from ..models.rul import QUANTILES
+from ..core.train import ModelBundle
 
 FORMAT_VERSION = 1
 OPSET = 17
@@ -451,7 +451,7 @@ def rul_input_spec(rul) -> dict:
 def build_rul_graph(rul, trees: str = "onnx-ml", strategy: str = "gemm") -> "object":
     from onnx import TensorProto, helper
 
-    from .models.conformal import ConformalRUL
+    from ..models.conformal import ConformalRUL
 
     if isinstance(rul, ConformalRUL):
         return _conformal_graph(build_rul_graph(rul.base, trees, strategy), rul.q)

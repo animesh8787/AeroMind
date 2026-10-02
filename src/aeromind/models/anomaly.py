@@ -12,7 +12,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
-from ..features import FEATURE_NAMES
+from ..core.features import FEATURE_NAMES
 
 
 class AutoencoderModel:

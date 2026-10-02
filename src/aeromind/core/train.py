@@ -10,9 +10,9 @@ import numpy as np
 
 from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW, RUL_CAP_WINDOWS, TREND_WINDOW
 from .features import FEATURE_NAMES, N_FEATURES, extract_features, sequence_matrix, trend_matrix
-from .models import AnomalyDetector, FaultClassifier, LSTMRULEstimator, RULEstimator
-from .models.classifier import ContextResidual
-from .models.conformal import ConformalRUL
+from ..models import AnomalyDetector, FaultClassifier, LSTMRULEstimator, RULEstimator
+from ..models.classifier import ContextResidual
+from ..models.conformal import ConformalRUL
 from .simulator import simulate_run
 
 

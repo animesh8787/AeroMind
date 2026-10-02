@@ -9,12 +9,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW
-from .evaluate import evaluate
-from .federated import federated_demo
-from .pipeline import EdgePipeline
-from .simulator import simulate_run
-from .train import ModelBundle, TrainConfig, train
+from .core.config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW
+from .evaluation.evaluate import evaluate
+from .learning.federated import federated_demo
+from .edge.pipeline import EdgePipeline
+from .core.simulator import simulate_run
+from .core.train import ModelBundle, TrainConfig, train
 
 DEFAULT_MODEL = "artifacts/bundle.joblib"
 DEFAULT_ONNX = "artifacts/onnx"
@@ -23,7 +23,7 @@ DEFAULT_ONNX = "artifacts/onnx"
 def _load_backend(a):
     """The models the pipeline runs on: the joblib bundle, or its ONNX export."""
     if a.backend == "onnx":
-        from .onnx_export import OnnxBundle
+        from .edge.onnx_export import OnnxBundle
 
         return OnnxBundle(a.onnx_dir)
     return ModelBundle.load(a.model)
@@ -44,8 +44,8 @@ def _cmd_train(a) -> None:
 
 
 def _cmd_export_onnx(a) -> None:
-    from .onnx_export import OnnxBundle, check_parity, export_onnx
-    from .train import collect_run, rul_inputs
+    from .edge.onnx_export import OnnxBundle, check_parity, export_onnx
+    from .core.train import collect_run, rul_inputs
 
     bundle = ModelBundle.load(a.model)
     a.out = a.out or (DEFAULT_ONNX if a.trees == "onnx-ml" else f"{DEFAULT_ONNX}-trt")
@@ -90,7 +90,7 @@ def _cmd_evaluate(a) -> None:
 
 
 def _cmd_dashboard(a) -> None:
-    from .dashboard import backend_label, build_dashboard
+    from .report.dashboard import backend_label, build_dashboard
 
     t0 = time.time()
     out = build_dashboard(_load_backend(a), a.out, backend_label(a.backend))
@@ -108,7 +108,7 @@ def _cmd_serve(a) -> None:
 
 
 def _cmd_roi(a) -> None:
-    from .roi import Assumptions, sensitivity, simulate
+    from .maintenance.roi import Assumptions, sensitivity, simulate
 
     ev = evaluate(_load_backend(a), a.runs_per_mode, a.healthy_runs, 0, a.phases)
     out = simulate(ev, Assumptions(fleet_size=a.fleet, horizon_fh=a.horizon, seed=a.seed))
@@ -129,20 +129,20 @@ def _cmd_ims(a) -> None:
 
 
 def _cmd_bench(a) -> None:
-    from .bench import benchmark
+    from .edge.bench import benchmark
 
     print(json.dumps(benchmark(a.onnx_dir, a.n, phases=True, int8_dir=a.int8_dir), indent=2))
 
 
 def _cmd_report(a) -> None:
-    from .report import generate
+    from .report.evidence_report import generate
 
     generate(a.out, a.cmapss_dir, a.ims_dir, a.cmapss_seeds, lstm=a.lstm, log=lambda m: print(m, flush=True))
 
 
 def _cmd_federated(a) -> None:
     if a.rare_fault:
-        from .federated import rare_fault_demo
+        from .learning.federated import rare_fault_demo
 
         print(json.dumps(rare_fault_demo(a.clients, a.seed), indent=2))
         return
@@ -150,7 +150,7 @@ def _cmd_federated(a) -> None:
 
 
 def _cmd_cmapss(a) -> None:
-    from . import cmapss
+    from .datasets import cmapss
 
     cmapss.download(a.data_dir)
     out = {}

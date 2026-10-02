@@ -1,14 +1,14 @@
 import pytest
 
-from aeromind.acars import MAX_CHARS, decode, encode
-from aeromind.alerts import Advisory
-from aeromind.config import FAULT_MODES
-from aeromind.decision import (DEFER, GROUND_NOW, REPLACE_AT_NEXT_CHECK, Schedule, decide, failure_cdf,
+from aeromind.communications.acars import MAX_CHARS, decode, encode
+from aeromind.core.alerts import Advisory
+from aeromind.core.config import FAULT_MODES
+from aeromind.maintenance.decision import (DEFER, GROUND_NOW, REPLACE_AT_NEXT_CHECK, Schedule, decide, failure_cdf,
                                work_order)
-from aeromind.pipeline import EdgePipeline
-from aeromind.sensor_health import SensorFault, SensorFaultInjector
-from aeromind.simulator import simulate_run
-from aeromind.train import TrainConfig, train
+from aeromind.edge.pipeline import EdgePipeline
+from aeromind.edge.sensor_health import SensorFault, SensorFaultInjector
+from aeromind.core.simulator import simulate_run
+from aeromind.core.train import TrainConfig, train
 
 
 def _adv(p10, p50, p90, fault="bearing_wear"):

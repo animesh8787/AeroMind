@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from .alerts import ACTIONS, Advisory
+from ..core.alerts import ACTIONS, Advisory
 
 GROUND_NOW = "GROUND_NOW"
 REPLACE_AT_NEXT_CHECK = "REPLACE_AT_NEXT_CHECK"
@@ -132,7 +132,7 @@ class WorkOrder:
 
 
 def work_order(tail: str, advisory: Advisory, decision: Decision) -> WorkOrder:
-    from .acars import encode
+    from ..communications.acars import encode
 
     task, part = ACTIONS[advisory.fault_type]
     return WorkOrder(

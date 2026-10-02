@@ -28,8 +28,8 @@ def test_conformal_restores_coverage_and_keeps_order():
 
 def test_conformal_onnx_matches(tmp_path):
     pytest.importorskip("onnxruntime")
-    from aeromind.onnx_export import OnnxBundle, export_onnx
-    from aeromind.train import TrainConfig, collect_run, rul_inputs, train
+    from aeromind.edge.onnx_export import OnnxBundle, export_onnx
+    from aeromind.core.train import TrainConfig, collect_run, rul_inputs, train
 
     b = train(TrainConfig(healthy_runs=8, healthy_len=200, runs_per_mode=5, life_range=(200, 300), seed=11,
                           conformal=True))

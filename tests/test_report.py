@@ -1,4 +1,4 @@
-from aeromind.report import to_markdown
+from aeromind.report.evidence_report import to_markdown
 
 
 def test_markdown_renders_unavailable_datasets():

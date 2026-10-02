@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import pytest
 
-from aeromind.features import N_FEATURES, SequenceTracker, sequence_matrix
+from aeromind.core.features import N_FEATURES, SequenceTracker, sequence_matrix
 
 
 def test_sequence_tracker_matches_offline_matrix_and_pads_left():
@@ -21,9 +21,9 @@ def test_sequence_tracker_matches_offline_matrix_and_pads_left():
 torch = pytest.importorskip("torch")
 
 from aeromind.models import LSTMRULEstimator  # noqa: E402
-from aeromind.pipeline import EdgePipeline  # noqa: E402
-from aeromind.simulator import simulate_run  # noqa: E402
-from aeromind.train import TrainConfig, train  # noqa: E402
+from aeromind.edge.pipeline import EdgePipeline  # noqa: E402
+from aeromind.core.simulator import simulate_run  # noqa: E402
+from aeromind.core.train import TrainConfig, train  # noqa: E402
 
 
 def _toy(n_runs=12, length=60, seq_len=8, seed=0):
@@ -77,8 +77,8 @@ def test_lstm_onnx_export_matches_torch(lstm_bundle, tmp_path):
     pytest.importorskip("onnxruntime")
     import onnx
 
-    from aeromind.onnx_export import TENSORRT_OPERATORS, OnnxBundle, export_onnx, operators
-    from aeromind.train import collect_run, rul_inputs
+    from aeromind.edge.onnx_export import TENSORRT_OPERATORS, OnnxBundle, export_onnx, operators
+    from aeromind.core.train import collect_run, rul_inputs
 
     man = export_onnx(lstm_bundle, tmp_path)
     assert man["rul_input"] == {"name": "sequence", "kind": "sequence", "shape": [30, N_FEATURES + 1]}

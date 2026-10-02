@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from aeromind.features import FEATURE_NAMES, extract_features
-from aeromind.pipeline import EdgePipeline
-from aeromind.simulator import FLIGHT_PROFILE, PHASES, LiveAircraft, phase_context, simulate_run
-from aeromind.train import TrainConfig, train
+from aeromind.core.features import FEATURE_NAMES, extract_features
+from aeromind.edge.pipeline import EdgePipeline
+from aeromind.core.simulator import FLIGHT_PROFILE, PHASES, LiveAircraft, phase_context, simulate_run
+from aeromind.core.train import TrainConfig, train
 
 
 def test_flight_profile_cycles_and_sets_context():

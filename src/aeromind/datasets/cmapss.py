@@ -30,8 +30,8 @@ from pathlib import Path
 import numpy as np
 from sklearn.cluster import KMeans
 
-from .features import sequence_matrix, trend_matrix
-from .models import AnomalyDetector, LSTMRULEstimator, RULEstimator
+from ..core.features import sequence_matrix, trend_matrix
+from ..models import AnomalyDetector, LSTMRULEstimator, RULEstimator
 
 URL = "https://phm-datasets.s3.amazonaws.com/NASA/6.+Turbofan+Engine+Degradation+Simulation+Data+Set.zip"
 SENSORS = [2, 3, 4, 7, 8, 9, 11, 12, 13, 14, 15, 17, 20, 21]  # 1-indexed
@@ -163,7 +163,7 @@ class CmapssRUL:
             self.rul_no_anomaly = RULEstimator(seed=self.seed).fit(T[:, : self.n_sensor_feats], y)
         self.train_median = float(np.median(y))
         if cal is not None:
-            from .models.conformal import ConformalRUL
+            from ..models.conformal import ConformalRUL
 
             rng = np.random.default_rng(self.seed + 8)
             Tc, yc = [], []

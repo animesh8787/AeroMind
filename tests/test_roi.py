@@ -1,5 +1,5 @@
-from aeromind.config import FAULT_MODES
-from aeromind.roi import Assumptions, sensitivity, simulate
+from aeromind.core.config import FAULT_MODES
+from aeromind.maintenance.roi import Assumptions, sensitivity, simulate
 
 
 def _eval(detected=6, lead=100.0, fa=0.0):

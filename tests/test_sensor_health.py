@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-from aeromind.pipeline import EdgePipeline, PipelineConfig
-from aeromind.sensor_health import (CHANNELS, SensorFault, SensorFaultInjector, SensorHealthConfig,
+from aeromind.edge.pipeline import EdgePipeline, PipelineConfig
+from aeromind.edge.sensor_health import (CHANNELS, SensorFault, SensorFaultInjector, SensorHealthConfig,
                                     SensorHealthMonitor, check_channel)
-from aeromind.simulator import simulate_run
-from aeromind.train import TrainConfig, train
+from aeromind.core.simulator import simulate_run
+from aeromind.core.train import TrainConfig, train
 
 
 def _windows(mode="healthy", life=80, seed=3):

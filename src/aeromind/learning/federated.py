@@ -14,10 +14,10 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from .config import FAULT_MODES, HEALTHY
-from .features import extract_features
-from .models.anomaly import AutoencoderModel
-from .simulator import TailProfile, simulate_run
+from ..core.config import FAULT_MODES, HEALTHY
+from ..core.features import extract_features
+from ..models.anomaly import AutoencoderModel
+from ..core.simulator import TailProfile, simulate_run
 
 
 def fedavg(client_weights: Sequence[Sequence[np.ndarray]], counts: Sequence[float]) -> list[np.ndarray]:

@@ -36,9 +36,9 @@ def _wait(cond, timeout=120):
 def server(tmp_path_factory):
     import uvicorn
 
-    from aeromind.onnx_export import export_onnx
+    from aeromind.edge.onnx_export import export_onnx
     from aeromind.server.app import create_app
-    from aeromind.train import TrainConfig, train
+    from aeromind.core.train import TrainConfig, train
 
     d = tmp_path_factory.mktemp("e2e")
     export_onnx(train(TrainConfig(healthy_runs=10, healthy_len=200, runs_per_mode=5, life_range=(200, 300),

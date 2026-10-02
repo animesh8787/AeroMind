@@ -1,6 +1,6 @@
 import numpy as np
 
-from aeromind.features import FEATURE_NAMES
+from aeromind.core.features import FEATURE_NAMES
 from aeromind.models.classifier import CONTEXT, ContextResidual
 
 

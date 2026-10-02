@@ -1,6 +1,6 @@
 import numpy as np
 
-from aeromind.cmapss import SENSORS, CmapssRUL, RegimeNormaliser, load_subset, nasa_score
+from aeromind.datasets.cmapss import SENSORS, CmapssRUL, RegimeNormaliser, load_subset, nasa_score
 
 
 def _write_fake_subset(d, subset="FD001", n_units=6, seed=0):
@@ -40,7 +40,7 @@ def test_loader_splits_units_and_selects_sensors(tmp_path):
 
 def test_regime_normaliser_standardises_each_regime():
     rng = np.random.default_rng(0)
-    from aeromind.cmapss import Engines
+    from aeromind.datasets.cmapss import Engines
 
     settings = np.vstack([np.tile([a, 0.0, 0.0], (300, 1)) for a in (0.0, 10.0, 20.0)])
     sensors = np.vstack([rng.normal(loc, 2.0, size=(300, 4)) for loc in (0.0, 50.0, 100.0)])

@@ -18,8 +18,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.signal import hilbert
 
-from .config import ELEC_HZ, FS, N_ELEC
-from .simulator import SensorWindow
+from ..core.config import ELEC_HZ, FS, N_ELEC
+from ..core.simulator import SensorWindow
 
 
 @dataclass(frozen=True)

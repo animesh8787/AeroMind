@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 
-from .alerts import Advisory
-from .features import FEATURE_NAMES
-from .sensor_health import CHANNELS, SensorAdvisory
+from ..core.alerts import Advisory
+from ..core.features import FEATURE_NAMES
+from ..edge.sensor_health import CHANNELS, SensorAdvisory
 
 MAX_CHARS = 220
 VERSION = "AMD1"

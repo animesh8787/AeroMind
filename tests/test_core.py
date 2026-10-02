@@ -3,12 +3,12 @@ import json
 import numpy as np
 import pytest
 
-from aeromind.config import FAULT_MODES, HEALTHY, N_ELEC, N_HIGH, N_SLOW
-from aeromind.features import FEATURE_NAMES, N_FEATURES, TrendTracker, extract_features, trend_matrix
-from aeromind.federated import fedavg, federated_scaler
-from aeromind.pipeline import EdgePipeline
-from aeromind.simulator import simulate_run
-from aeromind.train import TrainConfig, train
+from aeromind.core.config import FAULT_MODES, HEALTHY, N_ELEC, N_HIGH, N_SLOW
+from aeromind.core.features import FEATURE_NAMES, N_FEATURES, TrendTracker, extract_features, trend_matrix
+from aeromind.learning.federated import fedavg, federated_scaler
+from aeromind.edge.pipeline import EdgePipeline
+from aeromind.core.simulator import simulate_run
+from aeromind.core.train import TrainConfig, train
 
 
 def _features(mode, life, seed):
@@ -110,7 +110,7 @@ def test_pipeline_quiet_on_healthy_run(small_bundle):
 
 
 def test_federated_rare_fault_sharing_transfers_unseen_faults():
-    from aeromind.federated import rare_fault_demo
+    from aeromind.learning.federated import rare_fault_demo
 
     r = rare_fault_demo(n_clients=5, seed=3, rounds=6, local_epochs=2)
     assert r["local"]["unseen_fault_accuracy"] == 0.0  # it never saw those labels

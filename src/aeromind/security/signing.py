@@ -85,7 +85,7 @@ class ModelSlots:
 
     def install(self, pkg: str | Path) -> Slot:
         """Verify, copy into the store and activate. On any failure the active model is unchanged."""
-        from .onnx_export import OnnxBundle
+        from ..edge.onnx_export import OnnxBundle
 
         manifest = verify_package(pkg, self.public_key)
         version = manifest.get("package_version", "unversioned")

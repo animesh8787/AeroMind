@@ -8,14 +8,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..acars import encode
-from ..config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW
-from ..decision import Schedule, decide, work_order
-from ..features import FEATURE_NAMES
+from ..communications.acars import encode
+from ..core.config import FAULT_MODES, HEALTHY, HOURS_PER_WINDOW
+from ..maintenance.decision import Schedule, decide, work_order
+from ..core.features import FEATURE_NAMES
 from ..physics import GEOMETRY, envelope_spectrum, shaft_hz
-from ..pipeline import EdgePipeline
-from ..sensor_health import CHANNELS, SENSOR_FAULT_KINDS, SensorFault, SensorFaultInjector
-from ..simulator import PHASES, LiveAircraft
+from ..edge.pipeline import EdgePipeline
+from ..edge.sensor_health import CHANNELS, SENSOR_FAULT_KINDS, SensorFault, SensorFaultInjector
+from ..core.simulator import PHASES, LiveAircraft
 
 TAILS = tuple(f"VT-AMA{i:02d}" for i in range(1, 7))  # fictional registrations
 HISTORY = 240

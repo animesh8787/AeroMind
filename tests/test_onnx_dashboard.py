@@ -5,13 +5,13 @@ import pytest
 
 pytest.importorskip("onnxruntime")
 
-from aeromind.config import FAULT_MODES, HEALTHY
-from aeromind.dashboard import Scenario, build_dashboard
-from aeromind.features import FEATURE_NAMES, trend_matrix
-from aeromind.onnx_export import OnnxBundle, check_parity, export_onnx
-from aeromind.pipeline import EdgePipeline
-from aeromind.simulator import simulate_run
-from aeromind.train import TrainConfig, collect_run, train
+from aeromind.core.config import FAULT_MODES, HEALTHY
+from aeromind.report.dashboard import Scenario, build_dashboard
+from aeromind.core.features import FEATURE_NAMES, trend_matrix
+from aeromind.edge.onnx_export import OnnxBundle, check_parity, export_onnx
+from aeromind.edge.pipeline import EdgePipeline
+from aeromind.core.simulator import simulate_run
+from aeromind.core.train import TrainConfig, collect_run, train
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +78,7 @@ def trt_dir(bundle, tmp_path_factory):
 
 def test_hummingbird_parser_keeps_zero_leaves(bundle):
     pytest.importorskip("hummingbird.ml")
-    from aeromind.onnx_export import _hist_gbdt_params
+    from aeromind.edge.onnx_export import _hist_gbdt_params
 
     for pred in [p for it in bundle.classifier.model._predictors for p in it]:
         params, n = _hist_gbdt_params(pred, {}), pred.nodes
@@ -91,7 +91,7 @@ def test_hummingbird_parser_keeps_zero_leaves(bundle):
 def test_hummingbird_graphs_use_only_tensorrt_operators(trt_dir):
     import onnx
 
-    from aeromind.onnx_export import FILES, TENSORRT_OPERATORS, operators
+    from aeromind.edge.onnx_export import FILES, TENSORRT_OPERATORS, operators
 
     for name in FILES.values():
         m = onnx.load(trt_dir / name)
