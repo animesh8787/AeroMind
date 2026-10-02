@@ -23,22 +23,10 @@ from ..core.config import FAULT_MODES
 from ..llm import Copilot, CopilotRequest, load_dotenv
 from ..llm.copilot import UnknownAircraft, UnknownTask
 from ..security.signing import ModelSlots, PackageRejected, generate_keypair, sign_package
-from .fleet import SENSOR_PRESETS, Fleet
+from .fleet import SENSOR_PRESETS, Fleet, FleetSource, ensure_model
 from .remote import IngestError, RemoteRegistry
 
 DEFAULT_MODEL_DIR = "artifacts/onnx-fleet"
-
-
-def ensure_model(model_dir: str | Path) -> Path:
-    """The phase-aware ONNX model the fleet runs; trained and exported on first start (~20 s)."""
-    d = Path(model_dir)
-    if not (d / "manifest.json").exists():
-        from ..edge.onnx_export import export_onnx
-        from ..core.train import TrainConfig, train
-
-        print(f"No model at {d}: training a flight-phase model with conformal RUL (about 20 s)...", flush=True)
-        export_onnx(train(TrainConfig(phases=True, conformal=True)), d)
-    return d
 
 
 def _keys(workdir: Path) -> tuple[bytes, bytes]:
@@ -61,26 +49,6 @@ def compute_roi_job(model_dir: str) -> dict:
     r = simulate(ev, Assumptions())
     return {"status": "ready", "policies": r["policies"], "sensitivity": sensitivity(ev),
             "assumptions": r["assumptions"], "evaluation_runs_per_mode": 3}
-
-
-class FleetSource:
-    """What the copilot may read: the simulated fleet plus any remote edge devices (structured outputs only)."""
-
-    def __init__(self, gs: "GroundStation"):
-        self.gs = gs
-
-    def tails(self) -> list[str]:
-        return [*self.gs.fleet.aircraft, *self.gs.remote.aircraft]
-
-    def detail(self, tail: str) -> dict:
-        if tail in self.gs.fleet.aircraft:
-            return self.gs.fleet.aircraft[tail].detail()
-        return self.gs.remote.aircraft[tail].detail()
-
-    def events(self, tail: str) -> list[dict]:
-        if tail in self.gs.fleet.aircraft:
-            return list(self.gs.fleet.aircraft[tail].events)
-        return list(self.gs.remote.aircraft[tail].events)
 
 
 class GroundStation:
@@ -280,7 +248,7 @@ def create_app(model_dir: str | Path = DEFAULT_MODEL_DIR, workdir: str | Path = 
                              hours_to_next_check=(float(body["hours_to_next_check"])
                                                   if body.get("hours_to_next_check") is not None else None))
         try:
-            return gs.copilot.ask(req, FleetSource(gs)).to_dict()
+            return gs.copilot.ask(req, FleetSource(gs.fleet, gs.remote)).to_dict()
         except UnknownAircraft as e:
             raise HTTPException(404, str(e.args[0])) from e
         except UnknownTask as e:

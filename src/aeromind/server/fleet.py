@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -31,6 +32,21 @@ SENSOR_PRESETS = {
     "pressure_spike": ("spike", "pressure"),
     "sensor_dropout": ("dropout", "oil_debris"),
 }
+
+
+DEFAULT_MODEL_DIR = "artifacts/onnx-fleet"
+
+
+def ensure_model(model_dir: str | Path) -> Path:
+    """The phase-aware ONNX model the fleet runs; trained and exported on first start (~20 s)."""
+    d = Path(model_dir)
+    if not (d / "manifest.json").exists():
+        from ..edge.onnx_export import export_onnx
+        from ..core.train import TrainConfig, train
+
+        print(f"No model at {d}: training a flight-phase model with conformal RUL (about 20 s)...", flush=True)
+        export_onnx(train(TrainConfig(phases=True, conformal=True)), d)
+    return d
 
 
 def _r(v, nd=3):
@@ -210,4 +226,23 @@ class Fleet:
                 "aircraft": [ac.summary() for ac in self.aircraft.values()], "events": list(self.events)[:25]}
 
 
-__all__ = ["Fleet", "TAILS", "SENSOR_PRESETS", "HEALTHY"]
+class FleetSource:
+    """Read-only view of the fleet (and remote edge devices) for the copilot: structured outputs only."""
+
+    def __init__(self, fleet: Fleet, remote=None):
+        self.fleet, self.remote = fleet, remote
+
+    def _remote(self) -> dict:
+        return self.remote.aircraft if self.remote is not None else {}
+
+    def tails(self) -> list[str]:
+        return [*self.fleet.aircraft, *self._remote()]
+
+    def detail(self, tail: str) -> dict:
+        return self.fleet.aircraft[tail].detail() if tail in self.fleet.aircraft else self._remote()[tail].detail()
+
+    def events(self, tail: str) -> list[dict]:
+        return list((self.fleet.aircraft[tail] if tail in self.fleet.aircraft else self._remote()[tail]).events)
+
+
+__all__ = ["Fleet", "FleetSource", "TAILS", "SENSOR_PRESETS", "HEALTHY", "ensure_model"]

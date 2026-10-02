@@ -1,9 +1,11 @@
-"""Command line: train, export-onnx, demo, evaluate, dashboard, federated, cmapss."""
+"""AeroMind command line: train, export-onnx, demo, evaluate, serve, report, cmapss, ims, roi, bench,
+federated, dashboard, edge-agent, copilot, llm doctor."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -129,9 +131,151 @@ def _cmd_ims(a) -> None:
 
 
 def _cmd_bench(a) -> None:
-    from .edge.bench import benchmark
+    from .edge.bench import benchmark, compare, run_target
 
+    if a.compare:
+        print(compare(a.compare))
+        return
+    if a.target:
+        print(json.dumps(run_target(a.target, a.onnx_dir, a.n, a.int8_dir, a.out_dir), indent=2))
+        print(f"saved to {a.out_dir}/{a.target}.json")
+        return
     print(json.dumps(benchmark(a.onnx_dir, a.n, phases=True, int8_dir=a.int8_dir), indent=2))
+
+
+def _cmd_edge_agent(a) -> None:
+    from .edge.agent import parse_sensor_fault, run_agent
+    from .server.fleet import ensure_model
+
+    if a.sensor_fault:
+        parse_sensor_fault(a.sensor_fault)
+    model = ensure_model(a.onnx_dir)
+    where = a.ground or "no ground station (advisories printed" + (f" and written to {a.out})" if a.out else ")")
+    print(f"AeroMind edge agent {a.tail}: model {model}, publishing to {where}. Sensor input is SIMULATED. Ctrl+C to stop.",
+          flush=True)
+    try:
+        st = run_agent(model, a.tail, a.ground, rate=a.rate, max_windows=a.max_windows, inject=a.inject,
+                       inject_after=a.inject_after, life=a.life, sensor_fault=a.sensor_fault, out=a.out, seed=a.seed)
+    except KeyboardInterrupt:
+        print("\nstopped")
+        return
+    lat = np.asarray(st.latencies_ms)
+    print(f"{st.windows} windows, {st.advisories} advisories, {st.sent} sent, {st.failed_posts} failed posts, "
+          f"{st.backlog} queued; per-window latency on this host: mean {lat.mean():.1f} ms, max {lat.max():.1f} ms")
+
+
+def _show_copilot(r) -> None:
+    print(f"\n=== {r.deterministic['title']} (computed by AeroMind, not by an LLM) ===")
+    print("\n".join(r.deterministic["lines"]))
+    head = (f"AI COPILOT ({r.provider} / {r.model})" if r.ai_generated
+            else "RULE-BASED TEMPLATE (no LLM was used for this answer)")
+    print(f"\n=== {head} ===")
+    print(r.text)
+    print(f"\n[{r.label}]")
+    for w in r.warnings:
+        print(f"[note] {w}")
+    print(f"[{r.note}]")
+
+
+def _cmd_copilot(a) -> None:
+    from .llm import Copilot, CopilotRequest, load_dotenv
+    from .llm.copilot import UnknownAircraft, UnknownTask
+    from .llm.schemas import TASKS
+    from .edge.onnx_export import OnnxBundle
+    from .server.fleet import Fleet, FleetSource, ensure_model
+
+    load_dotenv()
+    fleet = Fleet(OnnxBundle(ensure_model(a.onnx_dir)))
+    if a.aircraft not in fleet.aircraft:
+        raise SystemExit(f"unknown aircraft {a.aircraft}; choose one of {', '.join(fleet.aircraft)}")
+    for _ in range(a.warmup):
+        fleet.tick()
+    if a.inject:
+        fleet.inject_component(a.aircraft, a.inject, a.life)
+        for _ in range(a.steps):
+            fleet.tick()
+    cp, src, tail = Copilot(), FleetSource(fleet), a.aircraft
+    st = cp.status()
+    print(f"AeroMind Maintenance Copilot | LLM STATUS: {st['status']} ({st['provider']}) | aircraft {tail} (SIMULATED)")
+    if st["status"] == "FALLBACK":
+        print("No LLM provider is reachable: answers are rule-based templates. Run `aeromind llm doctor`.")
+
+    def ask(task: str, question: str) -> None:
+        try:
+            _show_copilot(cp.ask(CopilotRequest(task=task, tail=tail, question=question), src))
+        except (UnknownAircraft, UnknownTask) as e:
+            print(f"error: {e}")
+
+    if a.task or a.ask:
+        ask(a.task or "", a.ask or "")
+        return
+    print(f"Ask a question, or: /task NAME ({', '.join(TASKS)}), /aircraft TAIL, /inject FAULT, /step N, /quit")
+    while True:
+        try:
+            line = input(f"\n{tail}> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not line:
+            continue
+        if line in ("/quit", "/exit"):
+            return
+        cmd, _, rest = line.partition(" ")
+        if cmd == "/aircraft" and rest in fleet.aircraft:
+            tail = rest
+        elif cmd == "/step":
+            for _ in range(int(rest or 20)):
+                fleet.tick()
+            print("advanced the simulation")
+        elif cmd == "/inject" and rest in FAULT_MODES:
+            fleet.inject_component(tail, rest, a.life)
+            print(f"injected simulated {rest} on {tail}; use /step 150 to let it develop")
+        elif cmd == "/task":
+            ask(rest.strip(), "")
+        elif line.startswith("/"):
+            print("unknown command")
+        else:
+            ask("", line)
+
+
+def _cmd_llm_doctor(a) -> None:
+    import os
+
+    from .llm import LLMRouter, load_dotenv
+    from .llm.groq_provider import GroqProvider
+    from .llm.ollama_provider import OllamaProvider
+    from .llm.router import parse_priority
+
+    load_dotenv()
+    prio_raw = os.environ.get("AEROMIND_LLM_PROVIDER", "auto")
+    try:
+        prio = parse_priority(prio_raw)
+    except ValueError as e:
+        print(f"configuration error: {e}")
+        return
+    groq, ollama = GroqProvider(), OllamaProvider()
+    print("AeroMind LLM doctor (secrets are never shown)")
+    print(f"  AEROMIND_LLM_PROVIDER : {prio_raw}  -> priority: {' > '.join(prio) or 'deterministic only'}")
+    print(f"  Groq    model         : {groq.model}")
+    print(f"  Groq    API key       : {'set' if groq.configured() else 'NOT set'}")
+    if a.ping and groq.configured():
+        try:
+            groq.complete("Reply with a JSON object.", '{"ping": true} -> reply {"ok": true}')
+            print("  Groq    live request  : OK")
+        except Exception as e:  # ProviderError text never contains the key
+            print(f"  Groq    live request  : FAILED ({e})")
+    elif groq.configured():
+        print("  Groq    live request  : not tried (add --ping to send one tiny request)")
+    models = ollama.installed_models()
+    print(f"  Ollama  URL           : {ollama.base_url}")
+    print(f"  Ollama  model         : {ollama.model}")
+    print(f"  Ollama  server        : {'reachable' if models is not None else 'NOT reachable'}")
+    if models is not None:
+        print(f"  Ollama  installed     : {', '.join(models) or 'none'}")
+        print(f"  Ollama  model pulled  : {'yes' if ollama.available() else f'NO (run: ollama pull {ollama.model})'}")
+    st = LLMRouter(priority=prio_raw).status()
+    print(f"  Active provider       : {st['provider']}  (LLM STATUS: {st['status']})")
+    print("  Deterministic fallback: always available (rule-based templates, labelled as such)")
 
 
 def _cmd_report(a) -> None:
@@ -170,6 +314,11 @@ def _cmd_cmapss(a) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):  # evidence text contains symbols (σ, ×) a Windows console may not encode
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     p = argparse.ArgumentParser(prog="aeromind", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -235,11 +384,46 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--data-dir", default="data/ims")
     m.set_defaults(fn=_cmd_ims)
 
-    k = sub.add_parser("bench", help="edge benchmark of an ONNX bundle: size, latency, memory, INT8 vs FP32")
+    k = sub.add_parser("bench", help="edge benchmark of an ONNX bundle: size, load time, latency, throughput, memory, INT8")
     k.add_argument("--onnx-dir", default="artifacts/onnx-fleet")
     k.add_argument("--int8-dir", default="artifacts/onnx-fleet-int8")
     k.add_argument("-n", type=int, default=1000)
+    k.add_argument("--target", choices=("laptop", "raspberry-pi"),
+                   help="label and save the result to --out-dir; raspberry-pi is refused unless this machine is one")
+    k.add_argument("--out-dir", default="artifacts/bench")
+    k.add_argument("--compare", nargs="+", metavar="FILE", help="print saved benchmark files side by side")
     k.set_defaults(fn=_cmd_bench)
+
+    g = sub.add_parser("edge-agent", help="run the edge pipeline as a service and send advisories to a ground station")
+    g.add_argument("--onnx-dir", default="artifacts/onnx-fleet")
+    g.add_argument("--tail", default="VT-EDGE01", help="fictional registration reported to the ground station")
+    g.add_argument("--ground", default=None, help="ground-station URL, e.g. http://192.168.1.20:8000 (omit to run offline)")
+    g.add_argument("--rate", type=float, default=4.0, help="windows per second (0 = as fast as possible)")
+    g.add_argument("--max-windows", type=int, default=None)
+    g.add_argument("--inject", choices=FAULT_MODES, default=None, help="inject a simulated component fault")
+    g.add_argument("--inject-after", type=int, default=40, help="window at which --inject / --sensor-fault start")
+    g.add_argument("--life", type=int, default=320)
+    g.add_argument("--sensor-fault", default=None, metavar="KIND:CHANNEL", help="e.g. stuck:temperature")
+    g.add_argument("--out", default=None, help="also append advisories to this JSONL file")
+    g.add_argument("--seed", type=int, default=4242)
+    g.set_defaults(fn=_cmd_edge_agent)
+
+    cp = sub.add_parser("copilot", help="ground-side LLM maintenance copilot in the terminal (simulated fleet)")
+    cp.add_argument("--aircraft", default="VT-AMA01")
+    cp.add_argument("--onnx-dir", default="artifacts/onnx-fleet")
+    cp.add_argument("--inject", choices=FAULT_MODES, default=None, help="inject a simulated fault first")
+    cp.add_argument("--life", type=int, default=320)
+    cp.add_argument("--warmup", type=int, default=40, help="windows to simulate before asking")
+    cp.add_argument("--steps", type=int, default=170, help="windows to simulate after --inject")
+    cp.add_argument("--ask", default=None, help="ask one question and exit")
+    cp.add_argument("--task", default=None, help="run one task (e.g. explain_alert, work_order) and exit")
+    cp.set_defaults(fn=_cmd_copilot)
+
+    ll = sub.add_parser("llm", help="LLM provider tools")
+    llsub = ll.add_subparsers(dest="llm_cmd", required=True)
+    dr = llsub.add_parser("doctor", help="show provider configuration and availability (never prints secrets)")
+    dr.add_argument("--ping", action="store_true", help="send one tiny live request to Groq")
+    dr.set_defaults(fn=_cmd_llm_doctor)
 
     q = sub.add_parser("report", help="regenerate every metric into artifacts/report (results.json, report.md)")
     q.add_argument("--out", default="artifacts/report")
