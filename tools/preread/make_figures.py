@@ -1,4 +1,4 @@
-"""Figures for the pre-read. All numbers are copied from docs/EVIDENCE_REPORT.md."""
+"""Figures for the pre-read. All numbers are copied from docs/evidence-report.md."""
 from pathlib import Path
 
 import matplotlib

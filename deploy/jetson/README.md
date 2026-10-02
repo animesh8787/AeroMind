@@ -1,5 +1,7 @@
 # Jetson deployment kit
 
+For a Raspberry Pi 5 edge device see [../raspberry-pi/README.md](../raspberry-pi/README.md) (also not yet run on hardware).
+
 > **NOT YET VALIDATED ON HARDWARE.** Nothing in this folder has been run on a Jetson. All latency
 > and memory figures in the project were measured on a laptop/cloud CPU. Treat these files as a
 > starting point for the first hardware session.

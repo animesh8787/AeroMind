@@ -1,7 +1,7 @@
 # AeroMind: technical report
 
 Project FY27-605244, Tata InnoVent 2027, "AI at the Edge Solutions for Aerospace".
-Every number below is produced by `python -m aeromind report` (see `artifacts/report/report.md`) unless
+Every number below is produced by `python -m aeromind report` (published in [evidence-report.md](evidence-report.md)) unless
 marked as an assumption. Simulator results use synthetic data; NASA IMS and C-MAPSS are public datasets.
 
 ## 1. Problem
@@ -13,12 +13,14 @@ into a maintenance decision.
 
 ## 2. System
 
-See `ARCHITECTURE.md`. Per 1-second window: sensor health checks → feature fusion (21 features incl.
+See [architecture.md](architecture.md). Per 1-second window: sensor health checks → feature fusion (21 features incl.
 outside air temperature and altitude) → anomaly score (Isolation Forest + autoencoder, calibrated so 1.0
 is the 99th percentile of healthy windows) → persistence gate (5 of 8 windows) → fault classifier →
 RUL p10/p50/p90 (quantile gradient boosting or a PyTorch LSTM, with a conformal interval) → physics
 evidence → advisory (JSON and a 220-character ACARS message). The ground station adds the decision
-engine, work orders, fleet ROI and signed over-the-air model updates.
+engine, work orders, fleet ROI and signed over-the-air model updates. V2 adds a ground-side LLM maintenance copilot
+(Groq, then Ollama, then rule-based templates) that explains these deterministic outputs under typed schemas and safety
+checks ([llm.md](llm.md)), and an edge agent that runs the same pipeline as a service and sends advisories to the ground station.
 
 ## 3. Results
 
@@ -59,10 +61,12 @@ time, 5 false advisories per 1,000 windows, $10k/h AOG). Fixed-interval replacem
 ## 4. Limitations
 
 Simulated faults are cleaner than real ones; IMS is one test rig and C-MAPSS is simulated engines; no flight
-data, no hardware-in-the-loop, no Jetson or TensorRT run, no certification work. Decision thresholds and
+data, no hardware-in-the-loop, no Jetson, TensorRT or Raspberry Pi run, no certification work. The LLM copilot only explains
+deterministic results; live-model answer quality was not evaluated. The full list is in [limitations.md](limitations.md). Decision thresholds and
 cost figures are prototype assumptions. Fleet learning was tested on simulated aircraft only.
 
 ## 5. Next steps
 
-1. Run the Jetson kit (`deploy/jetson`) and measure latency and power. 2. Add real multi-sensor data
-(e.g. N-CMAPSS, more bearing sets). 3. Partner data and an MRO integration pilot.
+1. Run `aeromind bench --target raspberry-pi` on a Raspberry Pi 5 (`deploy/raspberry-pi`) and the Jetson kit
+(`deploy/jetson`) and measure latency, memory and power. 2. Add real multi-sensor data (e.g. N-CMAPSS, more bearing sets).
+3. Score live LLM answers on a question set. 4. Partner data and an MRO integration pilot.

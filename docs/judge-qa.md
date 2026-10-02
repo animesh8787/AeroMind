@@ -16,8 +16,9 @@ component advisories in our tests.
 and altitude are model inputs. Without them the anomaly gate is open 98.6% of the time on healthy flights;
 with them 0.0%.
 
-**Has it run on a Jetson / TensorRT?** Not yet. The graphs use only TensorRT-supported operators and the
-build kit is ready; all timings so far are CPU (~1.2 ms per window).
+**Has it run on a Jetson / TensorRT / Raspberry Pi?** No. The graphs use only TensorRT-supported operators and the
+Jetson build kit exists; a Raspberry Pi 5 deployment path (`aeromind edge-agent`, `aeromind bench --target raspberry-pi`) is prepared.
+All timings so far are laptop or cloud CPU (~1.2 ms per window); Pi and Jetson results are pending.
 
 **How do you explain a prediction to an engineer?** Each advisory carries computed evidence: e.g. the
 envelope-spectrum peak at the bearing outer-race defect frequency, plus the most abnormal signals in σ.
@@ -31,3 +32,15 @@ misnamed at its first classified alert; RUL intervals for bearing wear are wider
 **Does federated learning actually help?** For anomaly detection it did not in our tests. For fault
 classification it does: an aircraft that has seen only 2 of 5 fault types recognises the other 3 with 91%
 accuracy after federated averaging, without any raw data leaving the aircraft (simulated fleet).
+
+**What does the LLM do, and can it make a wrong maintenance call?** It is ground-side and only explains the deterministic
+advisory, decision and what-if numbers in plain language and drafts a work-order checklist. The fault, RUL, risk and decision
+are computed by code and copied into the response by code; the model cannot change them. Its output must match a schema and pass
+checks for invented numbers, faults and aircraft, certification claims and control commands, otherwise a rule-based template is
+shown, labelled as such. It can still write a misleading sentence from true numbers, so every answer carries a "technician review required" label.
+
+**What if there is no internet or API key?** Everything works. The copilot falls back to Ollama if installed, otherwise to
+templates, and the header shows LLM STATUS: ONLINE, LOCAL or FALLBACK.
+
+**Is the Raspberry Pi in the demo?** Not unless you bring one. The edge agent runs the same pipeline on any machine; Pi benchmark
+numbers are not claimed until they are measured on a Pi.

@@ -106,5 +106,6 @@ Simulator, flight phases: RUL MAE {'bearing_wear': 7.7, 'oil_contamination': 9.3
 
 ## Not run
 
-CWRU bearing data: host blocked by this environment's network policy (HTTP 403). N-CMAPSS: 15.8 GB archive, not downloaded. Ground-side LLM maintenance copilot: needs an API key.
+CWRU bearing data: host blocked by this environment's network policy (HTTP 403). N-CMAPSS: 15.8 GB archive, not downloaded. Hardware: no Jetson or Raspberry Pi measurement exists (see `aeromind bench --target`). Ground-side LLM copilot: it explains deterministic output and produces no metrics here; its safety and fallback layers are covered by `pytest tests/llm`, and the quality of live Groq/Ollama answers has not been evaluated.
 
+Reproducibility note: a re-run on Windows after the V2 restructure matched this report closely but not exactly (for example oil contamination first-classified correct 4/6 instead of 5/6); see `technical-notes.md`.

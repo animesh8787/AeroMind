@@ -1,0 +1,16 @@
+# systemd unit for the AeroMind edge agent. Edit User, paths and --ground before installing.
+[Unit]
+Description=AeroMind edge agent (simulated sensor input)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/aeromind
+EnvironmentFile=/etc/aeromind-edge.env
+ExecStart=/home/pi/aeromind/.venv/bin/aeromind edge-agent --ground ${AEROMIND_GROUND_URL} --tail ${AEROMIND_TAIL} --rate 4
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

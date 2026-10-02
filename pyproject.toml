@@ -4,18 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aeromind"
-version = "0.1.0"
-description = "AeroMind proof of concept: onboard (edge) predictive aircraft health and maintenance intelligence"
+version = "2.0.0"
+description = "AeroMind: real-time onboard AI for predictive aircraft health and maintenance intelligence (research prototype, simulated data)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
+    "scipy>=1.11",
     "scikit-learn>=1.4",
     "joblib>=1.3",
 ]
+# The LLM copilot (Groq / Ollama) needs no extra package: it talks HTTP with the standard library.
 
 [project.optional-dependencies]
 onnx = ["onnx>=1.15", "onnxruntime>=1.17"]
+# Edge device (e.g. Raspberry Pi 5, ARM64): runs an exported ONNX bundle. No torch, no export tooling.
+edge = ["onnxruntime>=1.17"]
 # PyTorch LSTM RUL model (train --rul lstm, cmapss --rul lstm).
 lstm = ["torch>=2.5"]
 # Live ground station (python -m aeromind serve).

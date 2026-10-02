@@ -1,8 +1,25 @@
 __pycache__/
+*.py[cod]
 *.egg-info/
 .pytest_cache/
 .venv/
+venv/
 artifacts/
 build/
 dist/
 data/
+node_modules/
+
+# Secrets and local configuration: never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pub
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

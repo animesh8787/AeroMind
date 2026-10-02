@@ -149,6 +149,10 @@ def _cmd_edge_agent(a) -> None:
 
     if a.sensor_fault:
         parse_sensor_fault(a.sensor_fault)
+    if not (Path(a.onnx_dir) / "manifest.json").exists() and not a.train_if_missing:
+        raise SystemExit(f"no exported model at {a.onnx_dir}. Export one on a development machine "
+                         "(`aeromind serve` or `aeromind export-onnx`) and copy the folder here, "
+                         "or pass --train-if-missing (trains on this device; slow on a small board).")
     model = ensure_model(a.onnx_dir)
     where = a.ground or "no ground station (advisories printed" + (f" and written to {a.out})" if a.out else ")")
     print(f"AeroMind edge agent {a.tail}: model {model}, publishing to {where}. Sensor input is SIMULATED. Ctrl+C to stop.",
@@ -406,6 +410,8 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--sensor-fault", default=None, metavar="KIND:CHANNEL", help="e.g. stuck:temperature")
     g.add_argument("--out", default=None, help="also append advisories to this JSONL file")
     g.add_argument("--seed", type=int, default=4242)
+    g.add_argument("--train-if-missing", action="store_true",
+                   help="train and export a model here when --onnx-dir has none (slow on a small board)")
     g.set_defaults(fn=_cmd_edge_agent)
 
     cp = sub.add_parser("copilot", help="ground-side LLM maintenance copilot in the terminal (simulated fleet)")
